@@ -347,3 +347,33 @@ and mutually exclusive with cost- and reuse-weighted placement; use
 `PROBE policy baseline` to detach it and return to the original cache
 policy. `PROBE policy stats` prints bounded metadata and skipped
 samples. A default launch never allocates or updates the advisor.
+
+## Measured CPU/GPU staged-share scheduling
+
+The device-planned MoE already supports a **GPU-staged share** of
+the CPU-tier misses. Its `stage_k` device lookup maps the number of
+distinct misses to how many are copied to an existing CUDA staging
+buffer. `PROBE policy split on` now connects the actual per-layer
+CPU miss time observer to that planner without enabling experimental
+cache-rank or next-expert policies. Once enough CPU samples exist,
+`PROBE policy split refresh` can explicitly recompute its lookup.
+
+On the first refresh, Basalt measures one pinned-host → GPU staging
+copy with CUDA events on the existing staging stream (at idle), and
+combines measured DMA nanoseconds per blob with the observed CPU
+nanoseconds per miss. The dynamic plan minimizes the estimated maximum
+of CPU remaining work and GPU staging work, bounded by the original
+staging allocation and host-side minimum threshold. After completion
+of subsequent requests, a >=10% change in measured CPU cost triggers
+another idle-boundary lookup update. Both verifier chains use their
+own existing device lookup, and the previous table is retained in
+host metadata for immediate restoration.
+
+`PROBE policy baseline` restores both original CUDA lookup tables,
+detaches the observers and restores the standard device allocation.
+The policy is **off by default**. No token routing, output logits,
+GPU expert arithmetic, or capacity allocation changes. An unsupported
+device staging path or insufficient samples leaves the baseline
+table in place. The estimated GPU-side overhead still includes a
+constant kernel/launch allowance; it is not a full critical-path
+GPU kernel timing model.
