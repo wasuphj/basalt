@@ -6,6 +6,12 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
+#include <string>
+#include <string_view>
 
 namespace basalt::core::aei {
 
@@ -52,6 +58,67 @@ public:
     uint32_t rejected() const noexcept { return rejected_; }
     uint32_t transitions() const noexcept { return transitions_; }
     size_t metadata_bytes() const noexcept { return sizeof(*this); }
+    // Cross-process checkpoint: only evidence statistics persist, never
+    // an executing GPU policy or outstanding work. A restart explores from
+    // baseline with the restored bounded per-arm observations.
+    std::string checkpoint() const {
+        std::ostringstream out;
+        out.imbue(std::locale::classic());
+        out << std::setprecision(std::numeric_limits<double>::max_digits10);
+        out << "AEI-AUTO-1\n" << supported_ << ' ' << completed_
+            << ' ' << rejected_ << ' ' << transitions_ << ' ' << audits_ << '\\n';
+        for (size_t a = 0; a < kArms; ++a)
+            for (size_t b = 0; b < kBuckets; ++b) {
+                const auto& tg = sample_[a][b];
+                const auto& pp = prefill_[a][b];
+                out << tg.count << ' ' << tg.mean << ' '
+                    << pp.count << ' ' << pp.mean << '\\n';
+            }
+        return out.str();
+    }
+
+    bool restore_checkpoint(std::string_view checkpoint_data,
+                            uint32_t current_supported) {
+        if (checkpoint_data.size() > 4096) return false;
+        std::istringstream in{std::string(checkpoint_data)};
+        in.imbue(std::locale::classic());
+        std::string version;
+        uint32_t supported = 0, completed = 0, rejected = 0,
+                 transitions = 0, audits = 0;
+        if (!(in >> version) || version != "AEI-AUTO-1" ||
+            !(in >> supported >> completed >> rejected >> transitions >> audits) ||
+            (supported & ~((1u << kArms)-1)) || !(supported & 1u))
+            return false;
+        std::array<std::array<Sample, kBuckets>, kArms> tg{}, pp{};
+        for (size_t a = 0; a < kArms; ++a)
+            for (size_t b = 0; b < kBuckets; ++b) {
+                uint32_t n = 0, pn = 0;
+                double mean = 0.0, pmean = 0.0;
+                if (!(in >> n >> mean >> pn >> pmean) ||
+                    n > 65535 || pn > 65535 ||
+                    !std::isfinite(mean) || !std::isfinite(pmean) ||
+                    mean < 0 || pmean < 0 ||
+                    (n == 0 && mean != 0) || (pn == 0 && pmean != 0) ||
+                    (n && mean == 0) || (pn && pmean == 0))
+                    return false;
+                tg[a][b] = {n, mean};
+                pp[a][b] = {pn, pmean};
+            }
+        std::string trailing;
+        if (in >> trailing) return false;
+        // Never revive policies no longer supported by current geometry.
+        enable(current_supported);
+        for (size_t a = 0; a < kArms; ++a) {
+            if (!supports(static_cast<AutoArm>(a))) continue;
+            sample_[a] = tg[a];
+            prefill_[a] = pp[a];
+        }
+        completed_ = completed;
+        rejected_ = rejected;
+        transitions_ = transitions;
+        audits_ = audits;
+        return true;
+    }
     uint32_t samples(AutoArm arm, size_t bucket) const noexcept {
         return bucket < kBuckets ? sample_[static_cast<size_t>(arm)][bucket].count : 0;
     }
