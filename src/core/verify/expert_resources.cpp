@@ -263,6 +263,11 @@ uint64_t Verifier::aei_staged_dma_ns() const {
     return dm_ ? dm_->stage_dma_ns : 0;
 }
 
+uint64_t Verifier::aei_staged_gpu_ns() const {
+    return dm_ && dm_->gpu_stage_observations >= 8
+        ? dm_->gpu_stage_ns_per_expert : 0;
+}
+
 bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
                                       bool baseline, std::string& error) {
     using namespace basalt::kernels;
