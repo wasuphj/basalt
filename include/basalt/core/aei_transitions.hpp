@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
+#include <string_view>
 
 namespace basalt::core::aei {
 
@@ -56,6 +58,61 @@ public:
                     auto tmp = out[i]; out[i] = out[j]; out[j] = tmp;
                 }
         return out;
+    }
+
+    // Portable, bounded little-endian checkpoint of only the transition
+    // table. On restart there is no claim that an old prediction is fresh.
+    std::string checkpoint() const {
+        std::string out = "AET1";
+        out.reserve(4 + kRows * (1 + 4 + kTop * 6));
+        auto u32 = [&](uint32_t value) {
+            for (unsigned n = 0; n < 4; ++n)
+                out.push_back(static_cast<char>(value >> (n * 8)));
+        };
+        for (const auto& row : rows_) {
+            out.push_back(row.used ? char(1) : char(0));
+            u32(row.used ? row.source : 0);
+            for (const auto& edge : row.edges) {
+                u32(row.used && edge.count ? edge.expert : 0);
+                const uint16_t count = row.used ? edge.count : 0;
+                out.push_back(static_cast<char>(count));
+                out.push_back(static_cast<char>(count >> 8));
+            }
+        }
+        return out;
+    }
+
+    bool restore_checkpoint(std::string_view data, uint32_t experts) {
+        constexpr size_t kRowSize = 1 + 4 + kTop * 6;
+        if (!experts || data.size() != 4 + kRows * kRowSize ||
+            data.substr(0, 4) != "AET1") return false;
+        SparseTransitions candidate;
+        size_t at = 4;
+        auto u32 = [&]() {
+            uint32_t result = 0;
+            for (unsigned n = 0; n < 4; ++n)
+                result |= uint32_t(static_cast<uint8_t>(data[at++])) << (n * 8);
+            return result;
+        };
+        for (size_t i = 0; i < kRows; ++i) {
+            const unsigned used = static_cast<uint8_t>(data[at++]);
+            const uint32_t source = u32();
+            if (used > 1 || (used && (source >= experts || mix(source) % kRows != i)) ||
+                (!used && source != 0)) return false;
+            Row& row = candidate.rows_[i];
+            row.used = used == 1;
+            row.source = source;
+            for (auto& edge : row.edges) {
+                edge.expert = u32();
+                edge.count = static_cast<uint8_t>(data[at++]);
+                edge.count |= uint16_t(static_cast<uint8_t>(data[at++])) << 8;
+                if ((!edge.count && edge.expert) ||
+                    (edge.count && (!used || edge.expert >= experts)))
+                    return false;
+            }
+        }
+        *this = candidate;
+        return true;
     }
 
     size_t metadata_bytes() const noexcept { return sizeof(rows_); }
