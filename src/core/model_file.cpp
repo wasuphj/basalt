@@ -309,6 +309,7 @@ bool ModelFile::open(const std::string& path, std::string& err) {
         s.name.assign(e.name, strnlen(e.name, sizeof e.name));
         s.offset = e.offset;
         s.bytes = e.bytes;
+        std::copy(std::begin(e.sha256), std::end(e.sha256), s.sha256.begin());
         if (s.offset % kSectionAlign != 0 || s.offset < kHeaderBytes || s.offset > file_bytes_ ||
             s.bytes > file_bytes_ - s.offset) {
             err = path + ": section '" + s.name + "' lies outside the file or is misaligned";
@@ -317,6 +318,28 @@ bool ModelFile::open(const std::string& path, std::string& err) {
         sections_.push_back(std::move(s));
     }
     return true;
+}
+
+std::string ModelFile::expert_profile_identity() const {
+    // The packed container uses SHA-256 per section, computed when it is
+    // constructed. Require all routing-influencing weights and metadata.
+    constexpr const char* required[] = {"meta", "dense", "experts", "experts.layout"};
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string out = "basalt-model-sections-v1";
+    for (const char* name : required) {
+        const Section* section = find(name);
+        if (!section || section->bytes == 0) return {};
+        out += "\n";
+        out += name;
+        out += ":";
+        out += std::to_string(section->bytes);
+        out += ":";
+        for (const uint8_t b : section->sha256) {
+            out.push_back(hex[b >> 4]);
+            out.push_back(hex[b & 15]);
+        }
+    }
+    return out + "\n";
 }
 
 const ModelFile::Section* ModelFile::find(const std::string& name) const {
