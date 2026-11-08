@@ -7,6 +7,8 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace basalt::core::aei {
 
@@ -49,6 +51,24 @@ public:
         // An explicit prediction gets a short-lived rank uplift. It is not
         // residency ownership: existing swap limits and CUDA copy stay valid.
         return 4.0f;
+    }
+
+    // Called outside inference; snapshot the bounded learned transition
+    // table without blocking the realtime producer on file I/O.
+    std::string checkpoint() const {
+        std::lock_guard<std::mutex> guard(lock_);
+        return index_.checkpoint();
+    }
+    bool restore_checkpoint(std::string_view binary) {
+        std::lock_guard<std::mutex> guard(lock_);
+        if (!index_.restore_checkpoint(binary, static_cast<uint32_t>(size_)))
+            return false;
+        // No old predictions remain fresh across a process restart.
+        seen_.store(0, std::memory_order_relaxed);
+        dropped_.store(0, std::memory_order_relaxed);
+        for (size_t i = 0; i < size_; ++i)
+            predicted_at_[i].store(0, std::memory_order_relaxed);
+        return true;
     }
 
     uint64_t dropped_samples() const noexcept {
