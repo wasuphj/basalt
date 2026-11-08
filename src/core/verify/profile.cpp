@@ -1,4 +1,5 @@
 #include "common.hpp"
+#include "expert_plan.hpp"
 #include "basalt/core/load_progress.hpp"
 #include "basalt/core/verify.hpp"
 #include "basalt/core/remote_expert_opt.hpp"
@@ -267,6 +268,32 @@ void Verifier::collect_profile() {
             if (x == 0 || x < prev) continue;
             prof_sum_[kind][i] += (double) (x - prev);
             prev = x;
+        }
+        // Existing --profile GPU timestamps already bracket the PCIe
+        // Expert group. Count only actual staged entries; CPU misses
+        // alone would overstate GPU work in a hybrid split.
+        if (dm_ && dm_->stage_k && dm_->h_ring &&
+            l >= lb_ && l < le_) {
+            const auto& ring = dm_->h_ring[(size_t)(l-lb_)];
+            const int32_t misses = ring.n_cpu;
+            if (ring.layer == l && misses > 0 &&
+                misses <= (int32_t)basalt::kernels::kDmCap) {
+                const int32_t staged = dm_->stage_active[(size_t)misses];
+                const double elapsed = gap(at(l,22),at(l,21));
+                if (staged > 0 && elapsed >= (double)staged &&
+                    elapsed <= 1e12) {
+                    const uint64_t cost = (uint64_t)(elapsed / staged);
+                    if (dm_->gpu_stage_observations == 0)
+                        dm_->gpu_stage_ns_per_expert = cost;
+                    else {
+                        uint64_t& old = dm_->gpu_stage_ns_per_expert;
+                        if (cost >= old) old += (cost - old) / 8;
+                        else old -= (old - cost) / 8;
+                    }
+                    if (dm_->gpu_stage_observations < UINT32_MAX)
+                        ++dm_->gpu_stage_observations;
+                }
+            }
         }
         if (l + 1 < L) prof_sum_[kind][25] += gap(at(l + 1, 0), at(l, 24));
         const double dn = gap(at(l, 27), at(l, 0)), dd = gap(at(l, 28), at(l, 27)), du = gap(at(l, 1), at(l, 28));
