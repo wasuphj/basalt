@@ -396,6 +396,11 @@ bool Runtime::batch_step() {
     basalt::core::progress().busy.store(was_busy);
     if (!batch_on() && bt_windows > 0) {
         const double w = (double) bt_windows, wall = msd(bt_start, Clock::now());
+        // A batch epoch is a full committed concurrent workload, not
+        // an admission request or a single slot's wall time. Compare
+        // output tokens per epoch at a fixed configured batch size.
+        if (bt_tokens > 0)
+            aei_record_auto_request(bt_tokens, wall, 0, 0.0, true);
         const double L = (double) g.n_layers;
         basalt::log::info("basalt batch", "%lld windows, avg %.2f rows, %.2f ms/window = run %.2f (CUDA0 GPU-reach "
                              "wait %.2f + CPU experts %.2f) + commit %.2f + emit %.2f; per layer-window: CPU experts "
