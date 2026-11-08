@@ -83,30 +83,8 @@ Flow Runtime::dispatch() {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
-                if (aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, perr)) {
-                    using basalt::core::aei::AutoArm;
-                    uint32_t supported = 1u << (unsigned)AutoArm::baseline;
-                    const uint64_t total = g.n_layers > 0 && g.n_expert > 0
-                        ? (uint64_t)g.n_layers * (uint64_t)g.n_expert : 0;
-                    const bool rank_ready = o.adapt_swaps > 0 && !host_res.empty() &&
-                                            !drive.d.usage.empty();
-                    if (rank_ready && xq_across &&
-                        g.n_layers <= (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers)
-                        supported |= (1u << (unsigned)AutoArm::cost);
-                    if (rank_ready && xq_across && total > 0 &&
-                        total <= basalt::core::aei::ExpertReuseIndex::kMaximumExperts)
-                        supported |= (1u << (unsigned)AutoArm::reuse);
-                    if (rank_ready && total > 0 &&
-                        total <= basalt::core::aei::NextExpertPrefetch::kMaxExperts)
-                        supported |= (1u << (unsigned)AutoArm::prefetch);
-                    if (g.n_layers > 0 &&
-                        g.n_layers <= (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers &&
-                        (ver.aei_staged_split_available() || ver_b.aei_staged_split_available()))
-                        supported |= (1u << (unsigned)AutoArm::split);
-                    aei_auto.enable(supported);
-                    std::printf("PROBE policy auto on phase=explore arm=baseline supported=0x%x\n",
-                                supported);
-                }
+                if (aei_enable_automatic(perr))
+                    std::printf("PROBE policy auto on phase=explore arm=baseline\n");
             }
         } else if (line == "PROBE policy auto off") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
