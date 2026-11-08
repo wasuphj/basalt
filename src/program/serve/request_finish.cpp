@@ -295,7 +295,7 @@ Flow Request::complete() {
     // The policy FSM consumes only successfully completed decode metrics.
     // It proposes the next request's policy; never changes CUDA state here.
     runtime_.aei_record_auto_request(
-        produced_n, decode_ms,
+        produced_n, decode_ms, read_n, prompt_ms,
         !cancelled && !ram_out && kv_stop.empty() && produced_n > 0);
 
     return Flow::next;
