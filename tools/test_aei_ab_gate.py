@@ -55,6 +55,35 @@ class AeiGateTest(unittest.TestCase):
         candidate["results"][0]["checksum_ok"] = False
         self.assertEqual(compare(report(), candidate)["verdict"], "fail")
 
+    def test_shorter_decode_is_not_a_speedup(self):
+        candidate = report(150)
+        candidate["results"][0]["tokens"] = 200
+        self.assertEqual(compare(report(), candidate)["verdict"], "fail")
+
+    def test_early_finish_not_equivalent(self):
+        candidate = report(150)
+        candidate["results"][0]["finish"] = "eos"
+        self.assertEqual(compare(report(), candidate)["verdict"], "fail")
+
+    def test_missing_output_count_indeterminate(self):
+        candidate = report(150)
+        del candidate["results"][0]["tokens"]
+        with self.assertRaises(Indeterminate):
+            compare(report(), candidate)
+
+    def test_prefill_input_must_match(self):
+        baseline = report()
+        candidate = report(150)
+        for item in baseline["results"]:
+            if item["test"].startswith("pp"):
+                item.update({"depth_tokens": 16384, "prompt_tokens": 16384, "reused_tokens": 0})
+        for item in candidate["results"]:
+            if item["test"].startswith("pp"):
+                item.update({"depth_tokens": 16384, "prompt_tokens": 16384, "reused_tokens": 0})
+        self.assertEqual(compare(baseline, candidate)["verdict"], "pass")
+        candidate["results"][1]["reused_tokens"] = 2000
+        self.assertEqual(compare(baseline, candidate)["verdict"], "fail")
+
 
 if __name__ == "__main__":
     unittest.main()
