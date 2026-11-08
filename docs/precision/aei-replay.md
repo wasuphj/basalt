@@ -86,3 +86,21 @@ The output's Top-1/Top-4 hits are causal offline prediction metrics.
 They do not establish cache residency, timely prefetch, wall-clock
 speedup or quality preservation. The live ordered event producer and
 its asynchronous persistence consumer are still pending integration.
+
+## Host-visible verifier capture seam
+
+The non-device-planned verifier now has an **opt-in** sink setter,
+`Verifier::set_aei_router_trace(buffer, stream_id)`. After the per-layer
+GPU doorbell, the verifier copies its already mapped host-side Top-K IDs
+into the bounded in-memory event collector without file I/O or a new
+device transfer. Invalid IDs and full-buffer drops advance the sequence
+and therefore produce detectable gaps. A downstream worker must drain
+and persist events; such a worker and the caller that enables capture
+are **not integrated yet**. There is no production-enabled tracing flag.
+
+This seam does **not** capture the device-planned MoE ring: its host IDs
+cannot yet be certified as the complete original routing decisions.
+It also does not cover prompt prefill routing. Neither source should be
+filled in from frequency histograms. The sink must be bound only when
+the verifier is idle; the request stream ID must not be reused across
+different requests, and each verifier's stream must remain unique.

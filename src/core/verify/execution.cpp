@@ -258,6 +258,11 @@ int Verifier::serve_poll(PoolMultiFn pool, void* user, std::string& err) {
         set_plan_slot();
         const int n = T;
         progress_at("verify window: the CPU experts of layer", l);
+        // The non-device-planned path has the GPU's full ordered Top-K IDs
+        // in mapped host memory after the layer doorbell. Sampling is opt-in.
+        if (dm_ == nullptr && router_capture_.enabled() && h_ids_ != nullptr)
+            router_capture_.capture((uint32_t) l, h_ids_, (size_t) n,
+                                    (size_t) ss.k, (uint32_t) g.n_expert);
         if (remote_opt_) remote_opt_->begin(h_w_, 0, n);
         if (dm_ != nullptr) {   // the ring's own rows and tiers: the pool computes the CPU's entries only
             const basalt::kernels::DmRing& R = dm_->h_ring[k];
