@@ -34,6 +34,13 @@ int main() {
     CHECK(basalt::platform::aei_load_policy_checkpoint(path,env,reloaded));
     CHECK(!second.restore_checkpoint(reloaded,supported) ||
           second.active()==AutoArm::baseline);
+    const std::string binary = std::string("AEI-BUNDLE-2\n") +
+        "4\n119000\n" + std::string("ABCD") + std::string(119000, '\0');
+    CHECK(basalt::platform::aei_save_policy_checkpoint(path,env,binary));
+    CHECK(basalt::platform::aei_load_policy_checkpoint(path,env,reloaded));
+    CHECK(reloaded == binary);
+    CHECK(!basalt::platform::aei_load_policy_checkpoint(
+        path, "model=another;gpu=another", reloaded));
     (void)basalt::platform::remove_file(path);
     std::puts("aei_policy_checkpoint_test: OK");
 }

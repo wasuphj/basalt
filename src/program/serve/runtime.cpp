@@ -2,6 +2,8 @@
 #include "state.hpp"
 #include "basalt/platform/aei_policy_store.hpp"
 #include <algorithm>
+#include <charconv>
+#include <string_view>
 
 namespace basalt::program::serve {
 
@@ -75,8 +77,13 @@ bool Runtime::aei_save_checkpoint() {
     if (!aei_auto.enabled() || o.aei_state_path.empty()) return true;
     const std::string id = aei_checkpoint_identity();
     if (id.empty()) return false;
+    const std::string policy = aei_auto.checkpoint();
+    const std::string learned = aei_prefetch ? aei_prefetch->checkpoint() : std::string{};
+    const std::string bundle = "AEI-BUNDLE-2\n" +
+        std::to_string(policy.size()) + "\n" +
+        std::to_string(learned.size()) + "\n" + policy + learned;
     if (!basalt::platform::aei_save_policy_checkpoint(
-            o.aei_state_path, id, aei_auto.checkpoint())) return false;
+            o.aei_state_path, id, bundle)) return false;
     aei_checkpoint_saved_at = aei_auto.completed();
     return true;
 }
@@ -113,12 +120,61 @@ bool Runtime::aei_enable_automatic(std::string& err) {
     if (!o.aei_state_path.empty()) {
         std::string payload;
         const std::string identity = aei_checkpoint_identity();
+        bool resumed = false;
         if (!identity.empty() &&
             basalt::platform::aei_load_policy_checkpoint(
-                o.aei_state_path, identity, payload) &&
-            aei_auto.restore_checkpoint(payload, supported)) {
+                o.aei_state_path, identity, payload)) {
+            // Bundles are length-prefixed: the sparse table is binary and
+            // must never be parsed as a newline-delimited text file.
+            constexpr std::string_view prefix = "AEI-BUNDLE-2\n";
+            if (payload.compare(0, prefix.size(), prefix) == 0) {
+                const auto p1 = payload.find('\n', prefix.size());
+                const auto p2 = p1 == std::string::npos ?
+                    std::string::npos : payload.find('\n', p1 + 1);
+                size_t policy_len = 0, index_len = 0;
+                auto decimal = [](std::string_view value, size_t& output) {
+                    const auto result = std::from_chars(
+                        value.data(), value.data() + value.size(), output);
+                    return result.ec == std::errc{} &&
+                           result.ptr == value.data() + value.size();
+                };
+                if (p1 != std::string::npos && p2 != std::string::npos &&
+                    decimal(std::string_view(payload).substr(prefix.size(),
+                            p1 - prefix.size()), policy_len) &&
+                    decimal(std::string_view(payload).substr(p1 + 1,
+                            p2 - p1 - 1), index_len) &&
+                    policy_len <= 4096 && index_len <= 256u * 1024u &&
+                    payload.size() - (p2 + 1) == policy_len + index_len) {
+                    const std::string_view policy(payload.data() + p2 + 1, policy_len);
+                    const std::string_view sparse(payload.data() + p2 + 1 + policy_len,
+                                                   index_len);
+                    resumed = aei_auto.restore_checkpoint(policy, supported);
+                    if (resumed && index_len > 0) {
+                        if (!(supported & (1u << (unsigned)AutoArm::prefetch)) ||
+                            total == 0 ||
+                            total > basalt::core::aei::NextExpertPrefetch::kMaxExperts)
+                            resumed = false;
+                        else {
+                            if (!aei_prefetch)
+                                aei_prefetch = std::make_unique<
+                                    basalt::core::aei::NextExpertPrefetch>((size_t)total);
+                            resumed = aei_prefetch->restore_checkpoint(sparse);
+                        }
+                        if (!resumed) {
+                            aei_prefetch.reset();
+                            aei_auto.enable(supported);
+                        }
+                    }
+                }
+            } else {
+                // Forward-compatible read of the earlier statistics-only
+                // file written before the sparse transition bundle existed.
+                resumed = aei_auto.restore_checkpoint(payload, supported);
+            }
+        }
+        if (resumed) {
             aei_checkpoint_saved_at = aei_auto.completed();
-            basalt::log::info("basalt serve", "AEI restored bounded policy evidence from %s",
+            basalt::log::info("basalt serve", "AEI restored model-bound policy and Expert transitions from %s",
                               o.aei_state_path.c_str());
         }
     }
