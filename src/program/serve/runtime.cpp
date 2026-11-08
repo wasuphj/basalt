@@ -50,6 +50,9 @@ void Runtime::stop_aei_trace() {
 }
 
 bool Runtime::aei_enable_automatic(std::string& err) {
+    // Enabling anew is a new exploration session. Release old observers,
+    // not simply the selector statistics; avoid carrying stale model costs.
+    aei_auto.disable();
     if (!aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, err))
         return false;
     using basalt::core::aei::AutoArm;
@@ -112,7 +115,8 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     ver.set_aei_predictive_prefetch(nullptr, 0);
     ver_b.set_aei_predictive_prefetch(nullptr, 0);
     sp.set_aei_predictive_prefetch(nullptr);
-    if (aei_split_costs) {
+    if (aei_split_costs &&
+        (!aei_auto.enabled() || aei_auto_applied == AutoArm::split)) {
         std::string ignored;
         if (ver.aei_staged_split_available() &&
             !ver.aei_update_staged_split(nullptr, true, ignored)) {
