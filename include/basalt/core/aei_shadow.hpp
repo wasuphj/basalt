@@ -37,6 +37,11 @@ public:
         have_previous_ = true;
         ++metrics_.observed;
     }
+    // New requests and lost event ranges must never create fake transitions.
+    // Preserve learned edges while dropping only the predecessor.
+    void boundary() noexcept {
+        have_previous_ = false;
+    }
     ShadowMetrics metrics() const noexcept { return metrics_; }
     size_t metadata_bytes() const noexcept { return sizeof(*this); }
     void reset() noexcept {

@@ -363,6 +363,13 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME aei_trace_test COMMAND aei_trace_test)
   set_tests_properties(aei_trace_test PROPERTIES TIMEOUT 60)
 endif()
+# Continuity-safe causal ingestion of ordered router events
+if(BUILD_TESTING)
+  add_executable(aei_ingest_test tests/core/aei_ingest_test.cpp)
+  target_include_directories(aei_ingest_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_ingest_test COMMAND aei_ingest_test)
+  set_tests_properties(aei_ingest_test PROPERTIES TIMEOUT 60)
+endif()
 # Streaming shadow evaluation of sparse next-expert predictions.
 add_executable(aei-shadow tools/aei_shadow.cpp)
 target_include_directories(aei-shadow PRIVATE ${CMAKE_SOURCE_DIR}/include)

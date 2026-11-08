@@ -49,3 +49,36 @@ is 1,048,576; this cap is a safety bound, not a recommended model size.
 The cumulative proxy deliberately counts CPU miss and admission transfer
 cost independently; it does not model transfer overlap, latency hiding or
 the GPU scheduling critical path. Treat it only as an exploration signal.
+
+## Causal shadow evaluation
+
+`aei-shadow` accepts **only** ordered events, not histogram rows or
+the 3-column policy replay input. It requires a verified stream identifier
+and consecutive sequence numbers from the real router event producer:
+
+```csv
+stream,sequence,layer,expert
+15,0,0,3
+15,1,0,7
+15,2,1,4
+16,0,0,3
+```
+
+```sh
+bin/aei-shadow 512 48 ordered-events.csv
+```
+
+The geometry arguments are **examples**, not model autodetection.
+The predictor evaluates each successor before learning that transition.
+A changed stream resets only the predecessor, retaining prior statistics;
+a missing sequence interval also resets the predecessor and increments
+`missing_events`. Duplicate or reversed sequence numbers are rejected.
+The CLI expects events from each request as a contiguous stream; events
+from interleaved streams must be demultiplexed into contiguous blocks
+before replay. Do not reconstruct temporal sequences by iterating
+`route_hist_take()` counts: those are unordered aggregates.
+
+The output's Top-1/Top-4 hits are causal offline prediction metrics.
+They do not establish cache residency, timely prefetch, wall-clock
+speedup or quality preservation. The live ordered event producer and
+its asynchronous persistence consumer are still pending integration.
