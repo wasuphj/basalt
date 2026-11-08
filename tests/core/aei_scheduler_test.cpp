@@ -1,5 +1,7 @@
 #include "basalt/core/aei_scheduler.hpp"
 #include <cstdio>
+#include <array>
+#include <thread>
 #include <cstdint>
 #include <limits>
 using namespace basalt::core::aei;
@@ -25,5 +27,16 @@ int main() {
     s.observe({Device::cpu, 16, UINT64_MAX, UINT64_MAX, UINT64_MAX});
     CHECK(s.estimate(Device::cpu, 16).observations == before.observations + 1);
     CHECK(s.candidate(0) == Placement::baseline);
+    ShadowScheduler shared;
+    std::array<std::thread, 4> threads;
+    for (auto& t : threads)
+        t = std::thread([&] {
+            for (unsigned i = 0; i < 1000; ++i)
+                shared.observe({Device::cpu, 16, 200, 0, 0});
+        });
+    for (auto& t : threads) t.join();
+    CHECK(shared.estimate(Device::cpu, 16).observations +
+          shared.dropped_samples() == 4000);
+    CHECK(shared.metadata_bytes() < 4096);
     std::puts("aei_scheduler_test: OK");
 }
