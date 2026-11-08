@@ -18,7 +18,6 @@ public:
     static constexpr size_t kTop = 4;
 
     void observe(uint32_t from, uint32_t to) noexcept {
-        if (from == to) return;
         Row& row = rows_[mix(from) % kRows];
         if (!row.used || row.source != from) {
             row = Row{};
