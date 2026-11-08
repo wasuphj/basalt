@@ -23,6 +23,7 @@
 #include "basalt/core/pinned.hpp"
 #include "basalt/platform/file.hpp"
 #include "basalt/platform/aei_trace_writer.hpp"
+#include "basalt/platform/aei_prefetch_worker.hpp"
 #include "basalt/platform/memory.hpp"
 #include "basalt/platform/process.hpp"
 #include "basalt/platform/system.hpp"
@@ -213,6 +214,8 @@ private:
     std::unique_ptr<basalt::core::aei::ShadowScheduler> aei_cpu_costs{};
     std::unique_ptr<basalt::core::aei::LayerCostRank> aei_rank_costs{};
     std::unique_ptr<basalt::core::aei::ExpertReuseIndex> aei_reuse_index{};
+    std::unique_ptr<basalt::core::aei::PrefetchHintQueue> aei_hint_queue{};
+    std::unique_ptr<basalt::platform::AeiPrefetchWorker> aei_hint_worker{};
     std::unique_ptr<basalt::core::aei::NextExpertPrefetch> aei_prefetch{};
     std::unique_ptr<basalt::core::aei::LayerCostRank> aei_split_costs{};
     uint64_t aei_split_last_cpu_ns = 0;
@@ -595,6 +598,8 @@ private:
     Flow dispatch();
     // Safe for idle PROBE off and QUIT/EOF paths; joins writer before deleting ring.
     void stop_aei_trace();
+    void aei_start_prefetch_io();
+    void aei_stop_prefetch_io();
     bool aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err);
     bool aei_enable_automatic(std::string& err);
     std::string aei_checkpoint_identity() const;

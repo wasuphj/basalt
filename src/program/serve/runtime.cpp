@@ -262,6 +262,27 @@ bool Runtime::aei_enable_automatic(std::string& err) {
     return true;
 }
 
+void Runtime::aei_start_prefetch_io() {
+    if (!aei_prefetch || !srcp || g.n_expert <= 0) return;
+    if (!aei_hint_queue)
+        aei_hint_queue = std::make_unique<basalt::core::aei::PrefetchHintQueue>();
+    if (!aei_hint_worker)
+        aei_hint_worker = std::make_unique<basalt::platform::AeiPrefetchWorker>();
+    if (aei_hint_worker->start(*srcp, *aei_hint_queue, (uint32_t)g.n_expert))
+        aei_prefetch->set_hint_queue(aei_hint_queue.get());
+    else
+        basalt::log::warn("basalt serve", "AEI predictive source worker unavailable");
+}
+
+void Runtime::aei_stop_prefetch_io() {
+    if (aei_prefetch) aei_prefetch->set_hint_queue(nullptr);
+    if (aei_hint_worker) {
+        aei_hint_worker->stop();
+        aei_hint_worker.reset();
+    }
+    if (aei_hint_queue) aei_hint_queue->clear();
+}
+
 bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err) {
     using basalt::core::aei::AutoArm;
     if (batch_on() || (piped && pipe_inflight()) || ba_job) {
@@ -293,6 +314,7 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
 
     // All changes are allowed only at idle request boundaries. Removing a
     // callback's observer always precedes destroying its memory.
+    aei_stop_prefetch_io();
     ver.set_aei_cost_placement_probe(nullptr);
     ver_b.set_aei_cost_placement_probe(nullptr);
     ver.set_aei_reuse_probe(nullptr, 0);
@@ -346,6 +368,7 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
             ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
             ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
             sp.set_aei_predictive_prefetch(aei_prefetch.get());
+            aei_start_prefetch_io();
             break;
         case AutoArm::split:
             if (!aei_split_costs)
@@ -420,6 +443,7 @@ int Runtime::run_requests() {
                 basalt::log::warn("basalt serve", "AEI policy evidence checkpoint write failed");
         }
         if (flow == Flow::error) {
+            aei_stop_prefetch_io();
             stop_aei_trace();
             return 1;
         }
@@ -428,6 +452,7 @@ int Runtime::run_requests() {
 }
 
 int Runtime::shutdown() {
+    aei_stop_prefetch_io();
     if (aei_auto.enabled() && !aei_save_checkpoint())
         basalt::log::warn("basalt serve", "AEI policy evidence checkpoint write failed");
     // Final trace receipt must be emitted even on QUIT or stdin EOF.
