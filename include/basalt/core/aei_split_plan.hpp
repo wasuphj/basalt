@@ -17,7 +17,8 @@ struct StagedSplitPlan {
 // uncovered. baseline_min keeps the original host-side staging threshold.
 inline StagedSplitPlan plan_staged_split(
         uint64_t cpu_ns_per_miss, uint64_t dma_ns_per_blob,
-        int slots, int baseline_min) noexcept {
+        int slots, int baseline_min,
+        uint64_t measured_gpu_ns_per_staged = 0) noexcept {
     StagedSplitPlan out{};
     if (!cpu_ns_per_miss || !dma_ns_per_blob || slots < 1) return out;
     slots = std::min(slots, 16);
@@ -28,7 +29,9 @@ inline StagedSplitPlan plan_staged_split(
     for (int m = baseline_min; m <= StagedSplitPlan::kMaxEntries; ++m) {
         double best = host_fixed + m * cpu;
         for (int k = 1; k <= std::min(m, slots); ++k) {
-            const double cost = std::max(host_fixed + (m-k)*cpu, gpu_fixed + k*gpu);
+            const double staged = gpu + (double)measured_gpu_ns_per_staged;
+            const double cost = std::max(host_fixed + (m-k)*cpu,
+                                         gpu_fixed + k*staged);
             if (cost < best) {best = cost; out.staged[(size_t)m] = k;}
         }
     }
