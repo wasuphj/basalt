@@ -44,7 +44,9 @@ inline bool aei_load_policy_checkpoint(const std::string& path,
     if (!file) return false;
     std::array<char, 8193> bytes{};
     const size_t count = std::fread(bytes.data(), 1, bytes.size(), file);
-    const bool ok = !std::ferror(file) && std::feof(file) && std::fclose(file) == 0;
+    const bool readable = !std::ferror(file) && std::feof(file);
+    const bool closed = std::fclose(file) == 0;
+    const bool ok = readable && closed;
     if (!ok || count == bytes.size()) return false;
     const std::string contents(bytes.data(), count);
     const auto a = contents.find('\n');
