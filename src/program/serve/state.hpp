@@ -216,6 +216,7 @@ private:
     std::unique_ptr<basalt::core::aei::NextExpertPrefetch> aei_prefetch{};
     std::unique_ptr<basalt::core::aei::LayerCostRank> aei_split_costs{};
     uint64_t aei_split_last_cpu_ns = 0;
+    uint32_t aei_checkpoint_saved_at = 0;
     basalt::core::aei::AutoPolicyController aei_auto{};
     basalt::core::aei::AutoArm aei_auto_applied = basalt::core::aei::AutoArm::baseline;
     std::unique_ptr<basalt::platform::AeiTraceWriter> aei_trace_writer{};
@@ -596,6 +597,8 @@ private:
     void stop_aei_trace();
     bool aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err);
     bool aei_enable_automatic(std::string& err);
+    std::string aei_checkpoint_identity() const;
+    bool aei_save_checkpoint();
     void aei_record_auto_request(int64_t generated, double decode_ms,
                                  int64_t fresh_prompt, double prompt_ms, bool healthy);
     int shutdown();
