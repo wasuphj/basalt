@@ -1,6 +1,8 @@
 // AEI cost observations and shadow-only CPU/GPU scheduler. No execution-path changes.
 #pragma once
 #include <array>
+#include <atomic>
+#include <mutex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -33,6 +35,13 @@ public:
 
     void observe(const CostSample& sample) noexcept {
         if (sample.work_items == 0 || sample.execution_ns == 0) return;
+        // Two verifier chains may overlap. Skip samples under contention
+        // rather than putting a blocking lock on the inference path.
+        std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            dropped_samples_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         auto& cell = cells_[static_cast<size_t>(sample.device)][bucket(sample.work_items)];
         cell.execution_ns = smooth(cell.execution_ns, sample.execution_ns);
         cell.transfer_ns = smooth(cell.transfer_ns, sample.transfer_ns);
@@ -42,8 +51,13 @@ public:
 
     CostEstimate estimate(Device device, uint32_t work_items) const noexcept {
         if (work_items == 0) return {};
+        std::lock_guard<std::mutex> lock(mutex_);
         return cells_[static_cast<size_t>(device)][bucket(work_items)];
     }
+    uint64_t dropped_samples() const noexcept {
+        return dropped_samples_.load(std::memory_order_relaxed);
+    }
+    size_t metadata_bytes() const noexcept { return sizeof(*this); }
 
     // Neither placement nor router selection is changed. The caller must only log
     // this candidate and separately validate critical-path times before activation.
@@ -80,6 +94,8 @@ private:
             : previous - (previous - incoming) / 8;
     }
     std::array<std::array<CostEstimate, kBuckets>, 2> cells_{};
+    mutable std::mutex mutex_;
+    std::atomic<uint64_t> dropped_samples_{0};
 };
 
 } // namespace basalt::core::aei
