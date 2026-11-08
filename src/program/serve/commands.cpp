@@ -79,7 +79,11 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line == "PROBE policy auto on") {
+        if (line.rfind("PROBE baseline residents ", 0) == 0) {
+            if (aei_export_baseline_residents(
+                    line.substr(std::string("PROBE baseline residents ").size()), perr))
+                std::printf("PROBE baseline residents saved\n");
+        } else if (line == "PROBE policy auto on") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
