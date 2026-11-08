@@ -235,6 +235,7 @@ bool Verifier::dm_init(std::string& err) {
         std::memset(d->stage_host, 0, (size_t) LE * 8);
         d->stage_gen = warm_src_->places_generation() + 1;   // read at the first batch window
         std::copy(kt.begin(), kt.end(), d->stage_baseline.begin());
+        std::copy(kt.begin(), kt.end(), d->stage_active.begin());
         d->stage_slots = stage_slots;
         d->stage_blob_bytes = (uint64_t)blob;
         d->stage_stride = stride;
@@ -260,6 +261,11 @@ bool Verifier::aei_staged_split_available() const noexcept {
 
 uint64_t Verifier::aei_staged_dma_ns() const {
     return dm_ ? dm_->stage_dma_ns : 0;
+}
+
+uint64_t Verifier::aei_staged_gpu_ns() const {
+    return dm_ && dm_->gpu_stage_observations >= 8
+        ? dm_->gpu_stage_ns_per_expert : 0;
 }
 
 bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
@@ -334,7 +340,8 @@ bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
             if (!d->stage_dma_ns) d->stage_dma_ns = 1;
         }
         const auto updated = aei::plan_staged_split(
-            cpu_ns, d->stage_dma_ns, d->stage_slots, d->stage_min);
+            cpu_ns, d->stage_dma_ns, d->stage_slots, d->stage_min,
+            d->gpu_stage_observations >= 8 ? d->gpu_stage_ns_per_expert : 0);
         std::copy(updated.staged.begin(), updated.staged.end(), table.begin());
     }
     if (cudaMemcpy(d->stage_k, table.data(), sizeof(table),
@@ -342,6 +349,7 @@ bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
         error = "AEI failed to update staged-share device lookup";
         return false;
     }
+    d->stage_active = table;
     d->stage_cost_override = !baseline;
     return true;
 }

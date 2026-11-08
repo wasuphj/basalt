@@ -94,6 +94,9 @@ struct DecMoe {
     int64_t stage_stride = 0;
     int stage_blocks = 0;
     std::array<int32_t, basalt::kernels::kDmCap + 1> stage_baseline{};
+    std::array<int32_t, basalt::kernels::kDmCap + 1> stage_active{};
+    uint64_t gpu_stage_ns_per_expert = 0;
+    uint32_t gpu_stage_observations = 0;
     int stage_slots = 0;
     uint64_t stage_blob_bytes = 0;
     uint64_t stage_dma_ns = 0;
