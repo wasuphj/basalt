@@ -240,3 +240,20 @@ cannot infer benefit from repeated slots or overlap. Treat it as
 experimental and run independent A/B before promotion. When
 `xq_across` is disabled, ranking remains baseline even with the
 cost observer enabled. All defaults are OFF.
+
+## Experimental reuse-aware adaptive placement
+
+An idle `PROBE policy reuse on` allocates an optional concurrent
+per-expert reuse interval table (maximum 1,048,576 experts, two 64-bit
+atomics each). Actual Top-K selected IDs on both verifier paths
+update the interval EWMA; the normal adaptive cross-layer ranking is
+then weighted 0.5–1.4x according to expected reuse urgency. A very
+overdue expert decays instead of remaining pinned forever. This is
+a lightweight reuse predictor, **not** an exact SpecMD implementation.
+
+`PROBE policy cost on` and `PROBE policy reuse on` are mutually
+exclusive: enabling one detaches the other. `PROBE policy baseline`
+detaches both observers and restores unchanged rankings. Defaults stay
+OFF. The heuristic does not alter per-layer-only adaptation, slot
+ownership, GPU kernels or CUDA copy semantics; real A/B is needed
+before treating it as an improvement.
