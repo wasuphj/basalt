@@ -43,7 +43,7 @@ struct PrefillStats {
 
 }  // namespace basalt::prefill
 namespace basalt::core { class MtpDrafter; }
-namespace basalt::core::aei { class RouterEventBuffer; }
+namespace basalt::core::aei { class RouterEventBuffer; class NextExpertPrefetch; }
 namespace basalt::prefill {
 
 class Prefill {
@@ -130,6 +130,9 @@ public:
     // Optional ordered Top-K event capture using IDs already transferred
     // from the GPU for grouping. OFF by default, no new device copy.
     void set_aei_router_trace(core::aei::RouterEventBuffer* sink);
+    // Warm the same predictor the decode verifier uses from exact
+    // Prefill Top-K IDs already copied to host for expert grouping.
+    void set_aei_predictive_prefetch(core::aei::NextExpertPrefetch* advisor);
     /// Adds the counts since `route_hist_reset` (n_layers x n_expert, each stage fills its own layers) into `out`
     /// and the prompt tokens they cover into `tokens`, and stops counting.  False when counting was not started.
     bool route_hist_take(std::vector<uint32_t>& out, int64_t& tokens);
@@ -237,6 +240,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     core::aei::RouterEventBuffer* aei_trace_sink_ = nullptr;
+    core::aei::NextExpertPrefetch* aei_prefetch_advisor_ = nullptr;
     PrefillStats stats_;
 };
 
