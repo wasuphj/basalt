@@ -39,31 +39,30 @@ def verify(csv_path: Path, log_path: Path) -> dict:
     digest = hashlib.sha256()
     count = 0
     with csv_path.open("rb") as raw:
-        # Hash the exact bytes used in the verification. Do not silently
-        # normalize carriage returns or encoding before deriving provenance.
-        data = raw.read()
-    digest.update(data)
+        for chunk in iter(lambda: raw.read(1024 * 1024), b""):
+            digest.update(chunk)
     try:
-        text = data.decode("utf-8")
-        import io
-        reader = csv.reader(io.StringIO(text, newline=""))
-        if next(reader, None) != ["stream", "sequence", "layer", "expert"]:
-            raise InvalidTrace("invalid CSV header")
-        for line, fields in enumerate(reader, 2):
-            if len(fields) != 4 or any(not field.isascii() or not field.isdecimal()
-                                       for field in fields):
-                raise InvalidTrace(f"invalid CSV row at record {line}")
-            stream, sequence, layer, expert = map(int, fields)
-            if stream > MAX_UINT64 or sequence > MAX_UINT64 or layer > MAX_UINT32 or expert > MAX_UINT32:
-                raise InvalidTrace(f"router ID outside bounds at record {line}")
-            if stream not in seen and len(seen) >= MAX_STREAMS:
-                raise InvalidTrace("stream cursor cardinality bound exceeded")
-            expected = seen.get(stream, -1) + 1
-            if sequence != expected:
-                raise InvalidTrace(f"missing, duplicated or reordered event at record {line}: "
-                                   f"stream={stream}, expected={expected}, got={sequence}")
-            seen[stream] = sequence
-            count += 1
+        # Replay the data in a bounded streaming second pass. Neither
+        # hashing nor sequence validation loads the entire trace into RAM.
+        with csv_path.open("r", encoding="utf-8", newline="") as trace:
+            reader = csv.reader(trace, strict=True)
+            if next(reader, None) != ["stream", "sequence", "layer", "expert"]:
+                raise InvalidTrace("invalid CSV header")
+            for line, fields in enumerate(reader, 2):
+                if len(fields) != 4 or any(not field.isascii() or not field.isdecimal()
+                                           for field in fields):
+                    raise InvalidTrace(f"invalid CSV row at record {line}")
+                stream, sequence, layer, expert = map(int, fields)
+                if stream > MAX_UINT64 or sequence > MAX_UINT64 or layer > MAX_UINT32 or expert > MAX_UINT32:
+                    raise InvalidTrace(f"router ID outside bounds at record {line}")
+                if stream not in seen and len(seen) >= MAX_STREAMS:
+                    raise InvalidTrace("stream cursor cardinality bound exceeded")
+                expected = seen.get(stream, -1) + 1
+                if sequence != expected:
+                    raise InvalidTrace(f"missing, duplicated or reordered event at record {line}: "
+                                       f"stream={stream}, expected={expected}, got={sequence}")
+                seen[stream] = sequence
+                count += 1
     except (UnicodeError, csv.Error) as ex:
         raise InvalidTrace(f"malformed CSV: {ex}") from ex
     if written != count:
