@@ -4,12 +4,14 @@
 namespace basalt::program::serve {
 
 Flow Request::complete() {
-    decode_ms = std::chrono::duration<double, std::milli>(Clock::now() - d0).count();
     // the last commit (set_commit_async): the session is complete before anything reads or copies it
     if (!runtime_.ver.wait_commit(runtime_.err) || (runtime_.pipe_on && !runtime_.ver_b.wait_commit(runtime_.err))) {
         std::printf("ERR %s\n", runtime_.err.c_str());
         return Flow::error;
     }
+    // Include the final asynchronous GPU commit in request decode latency.
+    // AEI must never mistake unfinished device work for a speedup.
+    decode_ms = std::chrono::duration<double, std::milli>(Clock::now() - d0).count();
     if (runtime_.pipe_on)
         basalt::log::info("basalt serve", "pipelined windows: %lld launched, %lld held", (long long) pair_runs,
                           (long long) pair_holds);
