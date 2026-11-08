@@ -206,6 +206,9 @@ private:
     int32_t* d_hist{};
     std::vector<int32_t> hist_stage{};
     int hist_dev{};
+    // Opt-in research telemetry. Allocated only by PROBE trace on at idle.
+    std::unique_ptr<basalt::core::aei::RouterEventBuffer> aei_trace{};
+    uint64_t aei_trace_next_stream = 1;
     basalt::core::Verifier ver{};
     basalt::core::VerifyHits vh{};
     // Layer split: `ver` runs layers [0, K1) and hands its residual to the next stage's verifier, and so on; the
