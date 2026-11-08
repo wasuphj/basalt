@@ -104,7 +104,7 @@ The device-planned MoE path is now included: CUDA's
 by a system fence and host doorbell. The host checks the layer index,
 token count and `kDmCap` bound before reading. Invalid ring headers
 advance the sequence to mark missing observations rather than invent
-routing decisions. **Prompt prefill routing is still not covered.**
+routing decisions. **Prompt Prefill routing is also captured by its own host-visible Top-K grouping path.**
 Never reconstruct sequences from frequency histograms. The sink must be bound only when
 the verifier is idle; the request stream ID must not be reused across
 different requests, and each verifier's stream must remain unique.
@@ -127,7 +127,7 @@ idle command. A 4096-entry buffer can overflow quickly when a model
 selects many experts per token. Gaps are visible through the event
 sequence or drop counters. No synthetic replacement events should be
 used in prediction accuracy calculations. This currently covers both the host-visible and device-planned
-verify windows (not prompt prefill). The default
+verify windows plus each Prefill run/stage. The default
 execution path does not allocate the buffer or activate the hook.
 
 ## From live diagnostics to the shadow evaluator
@@ -377,3 +377,20 @@ device staging path or insufficient samples leaves the baseline
 table in place. The estimated GPU-side overhead still includes a
 constant kernel/launch allowance; it is not a full critical-path
 GPU kernel timing model.
+
+## Prefill original Top-K capture
+
+During batched Prefill, the GPU's routing results are already copied
+to host memory before the CPU's expert-grouping loop. With a PROBE
+trace enabled, these original `T*K` IDs are emitted in their token
+order *before* the grouping sort, without extra D2H transfers.
+Each Prefill run/stage gets a distinct high-bit stream ID and a
+monotonic per-stream event sequence. Decode verifier streams use the
+other half of the ID space. Layer split stages can interleave safely
+because the shadow evaluator tracks per-stream cursor history.
+
+The same nonblocking 4096-event buffer and asynchronous file writer
+handle Prefill and Decode. Large prompts can overrun the buffer:
+when this happens the final completeness receipt fails closed rather
+than treating a truncated stream as evidence. The capture is
+experimental and remains OFF by default.
