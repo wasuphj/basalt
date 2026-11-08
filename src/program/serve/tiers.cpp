@@ -1,8 +1,28 @@
 // src/program/serve/tiers.cpp - tiers operations for the persistent engine.
 #include "basalt/core/host_pool.hpp"
 #include "state.hpp"
+#include "basalt/platform/aei_residency_export.hpp"
 
 namespace basalt::program::serve {
+
+bool Runtime::aei_export_baseline_residents(const std::string& path,
+                                           std::string& err) {
+    if (multi_gpu || peer.valid() || remote_opt || xq_across) {
+        err = "PROBE baseline: snapshot requires single-GPU per-layer standard adaptive mode";
+        return false;
+    }
+    if (batch_on() || (piped && pipe_inflight()) || ba_job || !pending.empty()) {
+        err = "PROBE baseline: cache adaptation or requests still in flight";
+        return false;
+    }
+    if (!basalt::platform::aei_export_residents(
+            path, host_res, (size_t)g.n_layers, (size_t)g.n_expert)) {
+        err = "PROBE baseline: failed to export current Expert residents";
+        return false;
+    }
+    return true;
+}
+
 
 // Seeds the adaptive tier's usage counts from the routing of the prompt just read, so the first adaptation rounds
 // of a request already move the experts the new topic uses toward the GPUs.  The earlier usage decays to kSeedKeep and
