@@ -14,10 +14,7 @@ public:
     static constexpr size_t kMaximumExperts = 1u << 20;
 
     explicit ExpertReuseIndex(size_t experts)
-        : size_(experts), cells_(new Cell[experts]) {
-        if (experts == 0 || experts > kMaximumExperts)
-            throw std::invalid_argument("AEI reuse index geometry outside bounded range");
-    }
+        : size_(validate(experts)), cells_(new Cell[size_]) {}
 
     void observe(size_t flattened) noexcept {
         if (flattened >= size_) return;
@@ -57,6 +54,11 @@ public:
     size_t size() const noexcept { return size_; }
 
 private:
+    static size_t validate(size_t experts) {
+        if (experts == 0 || experts > kMaximumExperts)
+            throw std::invalid_argument("AEI reuse index geometry outside bounded range");
+        return experts;
+    }
     struct Cell {
         std::atomic<uint64_t> last{0};
         std::atomic<uint64_t> interval{0};
