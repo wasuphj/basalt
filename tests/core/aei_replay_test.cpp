@@ -1,6 +1,8 @@
 // CPU-only policy replay invariants; does not assert GPU performance.
 #include "basalt/core/aei_replay.hpp"
 #include <cassert>
+#undef assert
+#define assert(expr) do { if (!(expr)) { std::fprintf(stderr, "FAIL %s:%d: %s\\n", __FILE__, __LINE__, #expr); return 1; } } while (0)
 #include <cstdio>
 #include <stdexcept>
 using namespace basalt::core::aei;
