@@ -70,8 +70,8 @@ public:
             rejected_++;
             phase_ = AutoPhase::cooldown;
             cooldown_left_ = 8;
-            active_ = AutoArm::baseline;
-            transitions_++;
+            winner_ = AutoArm::baseline;
+            set_active(AutoArm::baseline);
             return active_;
         }
         if (generated < 32 || generated > (1ll << 20)) return active_;
