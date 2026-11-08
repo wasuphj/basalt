@@ -281,6 +281,7 @@ Flow Runtime::dispatch() {
                         // Preserve any prior ring/diagnostics on startup error.
                     } else {
                         aei_trace_writer = std::move(writer);
+                        sp.set_aei_router_trace(aei_trace.get());
                         std::printf("PROBE trace file on capacity=%zu\n",
                                     basalt::core::aei::RouterEventBuffer::kCapacity);
                     }
@@ -300,6 +301,7 @@ Flow Runtime::dispatch() {
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 if (!aei_trace) aei_trace = std::make_unique<basalt::core::aei::RouterEventBuffer>();
+                sp.set_aei_router_trace(aei_trace.get());
                 std::printf("PROBE trace on capacity=%zu\n",
                             basalt::core::aei::RouterEventBuffer::kCapacity);
             }
