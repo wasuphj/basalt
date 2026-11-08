@@ -102,14 +102,18 @@ Flow Runtime::dispatch() {
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 std::string e0, e1;
-                const bool ok0 = ver.aei_update_staged_split(aei_split_costs.get(), false, e0);
-                const bool ok1 = ver_b.aei_update_staged_split(aei_split_costs.get(), false, e1);
-                if (!ok0 || !ok1) {
+                const bool have0 = ver.aei_staged_split_available();
+                const bool have1 = ver_b.aei_staged_split_available();
+                const bool ok0 = !have0 || ver.aei_update_staged_split(aei_split_costs.get(), false, e0);
+                const bool ok1 = !have1 || ver_b.aei_update_staged_split(aei_split_costs.get(), false, e1);
+                if ((!have0 && !have1) || !ok0 || !ok1) {
                     std::string ignored;
-                    if (ok0) (void)ver.aei_update_staged_split(nullptr, true, ignored);
-                    if (ok1) (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
-                    perr = "PROBE split: " + (ok0 ? e1 : e0);
+                    if (have0 && ok0) (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    if (have1 && ok1) (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                    perr = !have0 && !have1 ? "PROBE split: no available staging path"
+                        : "PROBE split: " + (ok0 ? e1 : e0);
                 } else {
+                    aei_split_last_cpu_ns = aei_split_costs->reference_cost_ns((size_t)g.n_layers);
                     std::printf("PROBE policy split updated cpu_ns=%llu dma_ns=%llu/%llu\n",
                         (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
                         (unsigned long long)ver.aei_staged_dma_ns(),
@@ -203,11 +207,14 @@ Flow Runtime::dispatch() {
                 aei_prefetch.reset();
                 if (aei_split_costs) {
                     std::string ignored;
-                    (void)ver.aei_update_staged_split(nullptr, true, ignored);
-                    (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                    if (ver.aei_staged_split_available())
+                        (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    if (ver_b.aei_staged_split_available())
+                        (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
                     ver.set_aei_cost_placement_probe(nullptr);
                     ver_b.set_aei_cost_placement_probe(nullptr);
                     aei_split_costs.reset();
+                    aei_split_last_cpu_ns = 0;
                 }
                 std::printf("PROBE policy baseline\n");
             }
