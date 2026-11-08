@@ -219,3 +219,24 @@ Even a PASS is not a proven improvement of all inference use cases:
 measure TTFT, complete request latency, VRAM, host RSS, concurrency
 scaling and application-level quality independently. Never use
 fabricated JSON or synthetic toy fixtures as performance evidence.
+
+## Experimental measured-cost adaptive placement
+
+After attaching a live DM-router capture, idle commands support
+`PROBE policy cost on`, `PROBE policy stats`, and
+`PROBE policy baseline`. Cost policy observes the actual CPU pool
+callback wall-time divided by the ring's CPU-tier miss entries, with
+eight samples minimum per layer. If fewer than 25% of the layers
+have enough observations (at least two layers), cross-layer adaptive
+ranking uses the exact previous scoring. Once enough samples exist,
+only cross-layer candidate and victim hotness gets a bounded
+0.5x–2x relative CPU-cost weight. The existing swap caps, async copy
+path, residency invariants and GPU kernels remain unchanged.
+
+This is a **measured CPU-miss ranking heuristic**, not fully calibrated
+CPU+GPU+DMA critical-path cost, and it does not activate the independent
+ShadowScheduler's CPU/GPU placement candidate. The per-layer model
+cannot infer benefit from repeated slots or overlap. Treat it as
+experimental and run independent A/B before promotion. When
+`xq_across` is disabled, ranking remains baseline even with the
+cost observer enabled. All defaults are OFF.
