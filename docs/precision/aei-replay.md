@@ -152,3 +152,21 @@ the downstream shadow evaluator's sequence checks. Since verifier
 windows can include rejected speculative drafts, these measurements
 describe executed router activity, **not** necessarily accepted output
 tokens. They are not production wall-clock performance evidence.
+
+## CPU expert service timing (experimental)
+
+At an idle command boundary, `PROBE cost on` enables the existing
+bounded AEI scheduling-cost model and attaches it to both verifier
+chains. `PROBE cost report` emits `AEI_COST cpu bucket observations
+ewma_ns` for each of eight workload-size buckets. `PROBE cost off`
+detaches the observer and discards its measurements. Inference remains
+unmodified: all scheduling decisions continue through Basalt's existing
+policy. There is no additional device allocation.
+
+The sample spans the host's expert-pool callback inside
+`Verifier::serve_poll` in the non-device-planned path. This is a
+**CPU service wall-time**, not a clean per-expert kernel duration, GPU
+execution time, PCIe DMA time or critical-path latency. A candidate
+CPU/GPU placement must remain `baseline` until separately measured GPU
+observations are available. The probe is disabled by default and needs
+on-device benchmarking to quantify timestamp overhead.

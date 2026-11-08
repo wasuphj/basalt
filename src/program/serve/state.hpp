@@ -208,6 +208,7 @@ private:
     int hist_dev{};
     // Opt-in research telemetry. Allocated only by PROBE trace on at idle.
     std::unique_ptr<basalt::core::aei::RouterEventBuffer> aei_trace{};
+    std::unique_ptr<basalt::core::aei::ShadowScheduler> aei_cpu_costs{};
     uint64_t aei_trace_next_stream = 1;
     basalt::core::Verifier ver{};
     basalt::core::VerifyHits vh{};

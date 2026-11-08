@@ -79,7 +79,39 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line == "PROBE trace on") {
+        if (line == "PROBE cost on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (!aei_cpu_costs) aei_cpu_costs = std::make_unique<basalt::core::aei::ShadowScheduler>();
+                ver.set_aei_cpu_cost_probe(aei_cpu_costs.get());
+                ver_b.set_aei_cpu_cost_probe(aei_cpu_costs.get());
+                std::printf("PROBE cost on\n");
+            }
+        } else if (line == "PROBE cost off") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                ver.set_aei_cpu_cost_probe(nullptr);
+                ver_b.set_aei_cpu_cost_probe(nullptr);
+                aei_cpu_costs.reset();
+                std::printf("PROBE cost off\n");
+            }
+        } else if (line == "PROBE cost report") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
+            else if (!aei_cpu_costs) perr = "PROBE cost: not enabled";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                for (size_t b = 0; b < basalt::core::aei::ShadowScheduler::kBuckets; ++b) {
+                    const uint32_t n = (uint32_t) 1 << b;
+                    const auto cpu = aei_cpu_costs->estimate(basalt::core::aei::Device::cpu, n);
+                    std::printf("AEI_COST cpu %u %u %llu\n", n, cpu.observations,
+                                (unsigned long long)cpu.execution_ns);
+                }
+                std::printf("PROBE cost end dropped_samples=%llu\n",
+                            (unsigned long long)aei_cpu_costs->dropped_samples());
+            }
+        } else if (line == "PROBE trace on") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -138,7 +170,7 @@ Flow Runtime::dispatch() {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 (void) probe_adapt(line, perr);
             }
-        } else if (line != "PROBE rates") perr = "PROBE: expected rates, set, adapt or trace";
+        } else if (line != "PROBE rates") perr = "PROBE: expected rates, set, adapt, trace or cost";
         else if (batch_on()) perr = "PROBE: not while batch slots are decoding";
         else {
             if (ba_job) { ba_thr.join(); ba_job = false; }
