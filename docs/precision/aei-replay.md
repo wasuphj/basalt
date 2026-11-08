@@ -426,7 +426,12 @@ positive decode time are used. The selector compares mean milliseconds
 per generated token against baseline **within matching generated-token
 length buckets**. It promotes an arm only with at least four samples
 in a comparable bucket and at least 8% lower observed latency per
-token. Otherwise the original policy wins. After 96 exploitation
+token. It also samples real Prefill milliseconds per freshly processed
+prompt token in independent prompt-length buckets. If any comparable
+bucket regresses more than 2% versus baseline, the candidate is
+rejected; if one policy has prompt measurements but there is no
+comparable bucket, promotion is withheld. Otherwise the original
+policy wins. After 96 exploitation
 samples, it restarts exploration to adapt to changing traffic.
 Execution failure or nonfinite latency enters an eight-request
 baseline cooldown before another exploration cycle. These boundaries
