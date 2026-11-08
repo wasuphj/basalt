@@ -207,24 +207,7 @@ Flow Runtime::dispatch() {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
-                ver.set_aei_router_trace(nullptr, 0);
-                ver_b.set_aei_router_trace(nullptr, 0);
-                // Stop and flush the I/O worker before destroying its source ring.
-                if (aei_trace_writer) {
-                    aei_trace_writer->stop();
-                    const uint64_t overflow = aei_trace->dropped_capacity();
-                    const uint64_t contention = aei_trace->dropped_contention();
-                    const uint64_t io_errors = aei_trace_writer->io_errors();
-                    const bool complete = overflow == 0 && contention == 0 && io_errors == 0;
-                    std::printf("PROBE trace file end written=%llu dropped_capacity=%llu dropped_contention=%llu io_errors=%llu complete=%d\n",
-                                (unsigned long long)aei_trace_writer->written(),
-                                (unsigned long long)overflow,
-                                (unsigned long long)contention,
-                                (unsigned long long)io_errors,
-                                complete ? 1 : 0);
-                    aei_trace_writer.reset();
-                }
-                aei_trace.reset();
+                stop_aei_trace();
                 std::printf("PROBE trace off\n");
             }
         } else if (line == "PROBE trace drain") {
