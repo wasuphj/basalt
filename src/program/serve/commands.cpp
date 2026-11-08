@@ -92,6 +92,14 @@ Flow Runtime::dispatch() {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 if (aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, perr)) {
                     aei_auto.disable();
+                    // Observers were detached by aei_apply_auto_policy.
+                    // Unlike an audit, an explicit OFF releases the retained
+                    // models to return all optional metadata to baseline.
+                    aei_rank_costs.reset();
+                    aei_reuse_index.reset();
+                    aei_prefetch.reset();
+                    aei_split_costs.reset();
+                    aei_split_last_cpu_ns = 0;
                     std::printf("PROBE policy auto off arm=baseline\n");
                 }
             }
