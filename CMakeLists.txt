@@ -346,6 +346,9 @@ if(BUILD_TESTING)
   basalt_gpu_test(NAME direct_upload_test COMMAND direct_upload_test)
   set_tests_properties(direct_upload_test PROPERTIES TIMEOUT 60)
 endif()
+# streaming, GPU-independent trace policy comparison tool
+add_executable(aei-replay tools/aei_replay.cpp)
+target_include_directories(aei-replay PRIVATE ${CMAKE_SOURCE_DIR}/include)
 # bounded CPU-only replay of expert cache policies
 if(BUILD_TESTING)
   add_executable(aei_replay_test tests/core/aei_replay_test.cpp)
