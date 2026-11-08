@@ -45,6 +45,7 @@ public:
     uint32_t completed() const noexcept { return completed_; }
     uint32_t rejected() const noexcept { return rejected_; }
     uint32_t transitions() const noexcept { return transitions_; }
+    size_t metadata_bytes() const noexcept { return sizeof(*this); }
     uint32_t samples(AutoArm arm, size_t bucket) const noexcept {
         return bucket < kBuckets ? sample_[static_cast<size_t>(arm)][bucket].count : 0;
     }
