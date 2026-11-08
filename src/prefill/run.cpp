@@ -20,6 +20,11 @@ void Prefill::set_aei_router_trace(core::aei::RouterEventBuffer* sink) {
     if (impl_) impl_->aei_trace_sink = sink;
     if (next_) next_->set_aei_router_trace(sink);
 }
+void Prefill::set_aei_predictive_prefetch(core::aei::NextExpertPrefetch* advisor) {
+    aei_prefetch_advisor_ = advisor;
+    if (impl_) impl_->aei_prefetch_advisor = advisor;
+    if (next_) next_->set_aei_predictive_prefetch(advisor);
+}
 
 
 bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::string& err) {
@@ -27,6 +32,8 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
     Impl& state = *impl_;
     state.aei_trace_sink = aei_trace_sink_;
     state.aei_trace_sequence = 0;
+    state.aei_prefetch_advisor = aei_prefetch_advisor_;
+    state.aei_have_previous = false;
     if (state.aei_trace_sink) {
         // The high bit separates prefill streams from verifier streams.
         const uint64_t id = prefill_trace_streams.fetch_add(1, std::memory_order_relaxed);
