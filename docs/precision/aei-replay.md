@@ -311,19 +311,21 @@ any session without one.
 ## Model-bound learned expert profiles
 
 A learned `--expert-profile-save` file is paired with
-`<profile>.model-id`. The identity consists of the original model
-container's `meta`, `dense`, `experts`, and `experts.layout`
-section byte counts and SHA-256 checksums. Those digests are already
-stored by the .basalt packer; no full weight rehash is needed at each
-startup. On startup a learned profile is used only if the identity
+`<profile>.model-id`. The identity is derived from the actual packed model's **sorted,
+non-profile sections**, their byte sizes and SHA-256 checksums; it
+requires a metadata section, an identifiable weight-bearing section,
+and populated section digests. The section names depend on model
+format, so optional or nonexistent names do not disable saving.
+These digests are already stored by the .basalt packer; no full
+weight rehash is needed at each startup. On startup a learned profile is used only if the identity
 sidecar matches the currently loaded packed model. Otherwise the
 model's original expert profile is used. `PROBE adapt profile=`
 also rejects a saved learned profile bound to a different model.
 
 Legacy learned profiles without a sidecar deliberately fall back to
 the embedded model profile, rather than guessing based on matching
-layer and expert counts. A model without all four required sections
-cannot write a bound learned profile. This is an identity check, not
+layer and expert counts. A model with missing section hashes or no identifiable
+weight section cannot write a bound learned profile. This is an identity check, not
 cryptographic verification of all model file bytes at runtime.
 
 ## Live sparse next-expert prefetch (experimental)
