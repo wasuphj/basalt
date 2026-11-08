@@ -442,6 +442,13 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME aei_split_plan_test COMMAND aei_split_plan_test)
   set_tests_properties(aei_split_plan_test PROPERTIES TIMEOUT 60)
 endif()
+# Asynchronous predictive read-ahead queue is bounded and CPU-only
+if(BUILD_TESTING)
+  add_executable(aei_prefetch_queue_test tests/core/aei_prefetch_queue_test.cpp)
+  target_include_directories(aei_prefetch_queue_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  target_link_libraries(aei_prefetch_queue_test PRIVATE Threads::Threads)
+  basalt_cpu_test(NAME aei_prefetch_queue_test COMMAND aei_prefetch_queue_test)
+endif()
 # Live predictor is a host-only bounded primitive, with no CUDA dependency
 if(BUILD_TESTING)
   add_executable(aei_next_prefetch_test tests/core/aei_next_prefetch_test.cpp)
