@@ -21,7 +21,11 @@ public:
         const uint64_t now = clock_.fetch_add(1, std::memory_order_relaxed) + 1;
         if (now == 0) return;
         auto& c = cells_[flattened];
-        const uint64_t previous = c.last.exchange(now, std::memory_order_relaxed);
+        // Writers can interleave after obtaining a global clock tick.
+        // Never let a late writer move last-seen time backwards.
+        uint64_t previous = c.last.load(std::memory_order_relaxed);
+        while (previous < now && !c.last.compare_exchange_weak(
+                   previous, now, std::memory_order_relaxed, std::memory_order_relaxed)) {}
         if (previous == 0 || previous >= now) return;
         const uint64_t distance = now - previous;
         auto old = c.interval.load(std::memory_order_relaxed);

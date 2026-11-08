@@ -3,6 +3,8 @@
 #include "basalt/core/aei_multistream.hpp"
 #include "basalt/core/aei_scheduler.hpp"
 #include "basalt/core/aei_trace.hpp"
+#include "basalt/core/aei_reuse.hpp"
+#include "basalt/core/aei_cost_rank.hpp"
 #include <cstdint>
 #include <cstdio>
 
@@ -14,11 +16,17 @@ int main() {
     constexpr size_t experts = 1u << 20;
     Replay replay(experts, 4096, Policy::cost_aware);
     HistogramStats histogram(experts);
-    const uint64_t total = replay.metadata_bytes() + histogram.metadata_bytes() +
-                           sizeof(RouterEventBuffer) + sizeof(MultiStreamShadow) +
-                           sizeof(ShadowScheduler);
-    CHECK(total <= limit);
+    const uint64_t offline = replay.metadata_bytes() + histogram.metadata_bytes() +
+                             sizeof(RouterEventBuffer) + sizeof(MultiStreamShadow) +
+                             sizeof(ShadowScheduler);
+    CHECK(offline <= limit);
     CHECK(replay.resident_count() == 0);
-    std::printf("aei_memory_budget_test: metadata=%llu limit=%llu\n",
-                (unsigned long long)total, (unsigned long long)limit);
+    ExpertReuseIndex reuse(experts);
+    const uint64_t live = reuse.metadata_bytes() + sizeof(RouterEventBuffer) +
+                          sizeof(MultiStreamShadow) + sizeof(ShadowScheduler) +
+                          sizeof(LayerCostRank);
+    CHECK(live <= limit);
+    std::printf("aei_memory_budget_test: offline=%llu live=%llu limit=%llu\n",
+                (unsigned long long)offline, (unsigned long long)live,
+                (unsigned long long)limit);
 }
