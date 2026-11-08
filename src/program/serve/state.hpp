@@ -596,7 +596,8 @@ private:
     void stop_aei_trace();
     bool aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err);
     bool aei_enable_automatic(std::string& err);
-    void aei_record_auto_request(int64_t generated, double decode_ms, bool healthy);
+    void aei_record_auto_request(int64_t generated, double decode_ms,
+                                 int64_t fresh_prompt, double prompt_ms, bool healthy);
     int shutdown();
 };
 
