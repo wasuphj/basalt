@@ -78,22 +78,10 @@ public:
         const double cost = decode_ms / static_cast<double>(generated);
         if (!(cost > 0.0) || !std::isfinite(cost)) return active_;
         const size_t b = bucket(generated);
-        auto& current = sample_[static_cast<size_t>(active_)][b];
-        // Online mean only, no unbounded trace history.
-        if (current.count < 65535) {
-            ++current.count;
-            current.mean += (cost - current.mean) / current.count;
-        }
-        if (prompt_tokens > 0 && prompt_tokens <= (1ll << 20) &&
-            prompt_ms > 0.0 && std::isfinite(prompt_ms)) {
-            auto& pp = prefill_[static_cast<size_t>(active_)][bucket(prompt_tokens)];
-            const double pp_cost = prompt_ms / static_cast<double>(prompt_tokens);
-            if (std::isfinite(pp_cost) && pp_cost > 0.0 && pp.count < 65535) {
-                ++pp.count;
-                pp.mean += (pp_cost - pp.mean) / pp.count;
-            }
-        }
         ++completed_;
+        // Audit and cooldown are baseline observations only. Keep them
+        // separate from the exploration baseline and winner estimates:
+        // otherwise a temporary drift probe silently rewrites history.
         if (phase_ == AutoPhase::audit) {
             add(audit_decode_[b], cost);
             if (prompt_tokens > 0 && prompt_tokens <= (1ll << 20) &&
@@ -125,6 +113,12 @@ public:
                 set_active(AutoArm::baseline);
             }
             return active_;
+        }
+        add(sample_[static_cast<size_t>(active_)][b], cost);
+        if (prompt_tokens > 0 && prompt_tokens <= (1ll << 20) &&
+            prompt_ms > 0.0 && std::isfinite(prompt_ms)) {
+            add(prefill_[static_cast<size_t>(active_)][bucket(prompt_tokens)],
+                prompt_ms / static_cast<double>(prompt_tokens));
         }
         if (phase_ == AutoPhase::explore) {
             if (++segment_samples_ >= kExploreSamples) {

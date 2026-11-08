@@ -50,6 +50,9 @@ void Runtime::stop_aei_trace() {
 }
 
 bool Runtime::aei_enable_automatic(std::string& err) {
+    // Enabling anew is a new exploration session. Release old observers,
+    // not simply the selector statistics; avoid carrying stale model costs.
+    aei_auto.disable();
     if (!aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, err))
         return false;
     using basalt::core::aei::AutoArm;
@@ -112,7 +115,8 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     ver.set_aei_predictive_prefetch(nullptr, 0);
     ver_b.set_aei_predictive_prefetch(nullptr, 0);
     sp.set_aei_predictive_prefetch(nullptr);
-    if (aei_split_costs) {
+    if (aei_split_costs &&
+        (!aei_auto.enabled() || aei_auto_applied == AutoArm::split)) {
         std::string ignored;
         if (ver.aei_staged_split_available() &&
             !ver.aei_update_staged_split(nullptr, true, ignored)) {
@@ -126,30 +130,40 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
         }
         aei_split_last_cpu_ns = 0;
     }
-    aei_rank_costs.reset();
-    aei_reuse_index.reset();
-    aei_prefetch.reset();
-    aei_split_costs.reset();
+    // During automatic exploration retain observer histories between
+    // arms. Reset only at an explicit stop; a baseline audit should not
+    // destroy the winning policy's learned transitions or CPU estimates.
+    const bool retain = aei_auto.enabled();
+    if (!retain) {
+        aei_rank_costs.reset();
+        aei_reuse_index.reset();
+        aei_prefetch.reset();
+        aei_split_costs.reset();
+    }
     switch (arm) {
         case AutoArm::baseline: break;
         case AutoArm::cost:
-            aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+            if (!aei_rank_costs)
+                aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
             ver.set_aei_cost_placement_probe(aei_rank_costs.get());
             ver_b.set_aei_cost_placement_probe(aei_rank_costs.get());
             break;
         case AutoArm::reuse:
-            aei_reuse_index = std::make_unique<basalt::core::aei::ExpertReuseIndex>((size_t)total);
+            if (!aei_reuse_index)
+                aei_reuse_index = std::make_unique<basalt::core::aei::ExpertReuseIndex>((size_t)total);
             ver.set_aei_reuse_probe(aei_reuse_index.get(), (uint32_t)g.n_expert);
             ver_b.set_aei_reuse_probe(aei_reuse_index.get(), (uint32_t)g.n_expert);
             break;
         case AutoArm::prefetch:
-            aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
+            if (!aei_prefetch)
+                aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
             ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
             ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
             sp.set_aei_predictive_prefetch(aei_prefetch.get());
             break;
         case AutoArm::split:
-            aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+            if (!aei_split_costs)
+                aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
             ver.set_aei_cost_placement_probe(aei_split_costs.get());
             ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
             break;

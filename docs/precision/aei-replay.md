@@ -483,3 +483,20 @@ adaptive GPU cache admission subsequently consume those observations.
 When the policy changes, Prefill observers are detached before the
 shared predictor is destroyed. The original prompt output and GPU
 routing logic are untouched.
+
+## Continuity of policy learning across baseline audits
+
+The automatic controller retains the bounded per-policy cost, reuse and
+sparse-transition observers while switching temporarily to baseline.
+Disabling an observer does not delete its learned state: returning to
+Prefetch after an audit immediately reuses its prior causal Expert
+transitions. CPU cost models likewise survive non-selected periods.
+A newly started automatic session and explicit `PROBE policy auto off`
+reset all these optional observers. Only one policy is active at any
+given request boundary, and all inactive probes remain detached.
+
+The FSM also keeps audit and cooldown observations separate from the
+original baseline exploration samples, preventing a temporary
+baseline probe from changing the estimate it is supposed to challenge.
+This preservation is opt-in only; normal Basalt startup allocates none
+of these policy data structures.

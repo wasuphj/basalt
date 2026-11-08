@@ -72,6 +72,12 @@ int main() {
     CHECK(audit.phase() == AutoPhase::exploit);
     CHECK(audit.active() == AutoArm::prefetch);
     CHECK(audit.audits() == 1);
+    // Temporary baseline audit samples never mutate the original
+    // exploration baseline or candidate histories.
+    CHECK(audit.samples(AutoArm::baseline, 1) ==
+          AutoPolicyController::kExploreSamples);
+    CHECK(audit.samples(AutoArm::prefetch, 1) ==
+          AutoPolicyController::kExploreSamples + AutoPolicyController::kAuditEvery);
     for (uint32_t i = 0; i < AutoPolicyController::kAuditEvery; ++i)
         audit.observe(128, 850.0, true);
     CHECK(audit.phase() == AutoPhase::audit);
