@@ -1,6 +1,7 @@
 // Optional next-expert advisor. Predictions affect cache-fill ranking only.
 #pragma once
 #include "basalt/core/aei_transitions.hpp"
+#include "basalt/core/aei_prefetch_queue.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,11 @@ public:
             predicted_at_[i].store(0, std::memory_order_relaxed);
     }
 
+    void set_hint_queue(PrefetchHintQueue* queue) noexcept {
+        std::lock_guard<std::mutex> guard(lock_);
+        hint_queue_ = queue;
+    }
+
     // The sender guarantees from/to belong to the same ordered request stream.
     // Under contention skip learning rather than waiting on inference.
     void observe(uint32_t from, uint32_t to) noexcept {
@@ -37,7 +43,13 @@ public:
         const auto candidates = index_.predict(to);
         for (size_t i = 0; i < 2 && i < candidates.size(); ++i) {
             if (candidates[i].count < 3 || candidates[i].expert >= size_) continue;
-            predicted_at_[candidates[i].expert].store(tick, std::memory_order_relaxed);
+            const auto expert = candidates[i].expert;
+            const uint64_t previous =
+                predicted_at_[expert].exchange(tick,std::memory_order_relaxed);
+            // Hints are sent before the swap round, at the moment routing
+            // predicts a future Expert. Never block on page read-ahead.
+            if (hint_queue_ && (!previous || tick < previous || tick-previous >= 32))
+                (void)hint_queue_->try_push(expert);
         }
         lock_.unlock();
     }
@@ -87,6 +99,7 @@ private:
     std::unique_ptr<std::atomic<uint64_t>[]> predicted_at_;
     mutable std::mutex lock_;
     SparseTransitions index_{};
+    PrefetchHintQueue* hint_queue_ = nullptr;
     std::atomic<uint64_t> seen_{0};
     std::atomic<uint64_t> dropped_{0};
 };
