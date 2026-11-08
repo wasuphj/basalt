@@ -141,6 +141,20 @@ void Runtime::apply_pending(bool wait, bool exchanges) {
     promoted.clear();
 }
 
+void Runtime::aei_prefetch_predicted_sources(const std::vector<Swap>& swaps) {
+    if (!aei_prefetch || srcp == nullptr) return;
+    // A bounded hint to the existing mapped-file source: issue read-ahead
+    // before the CUDA swap needs the same host blob. No new GPU copies,
+    // slots, worker pools or allocations on the router's critical path.
+    size_t advised = 0;
+    for (const Swap& swap : swaps) {
+        const size_t flat = (size_t)swap.layer * (size_t)g.n_expert + (size_t)swap.in;
+        if (aei_prefetch->boost(flat) <= 0.0f) continue;
+        srcp->prefetch(swap.layer, swap.in);
+        if (++advised == 8) break;
+    }
+}
+
 void Runtime::rank_swaps(std::vector<Swap>& swaps, bool across) {
     swaps.clear();
     // Only adjust the cross-layer ranking when at least 25% of layers
@@ -272,6 +286,7 @@ bool Runtime::adapt() {
     std::vector<Swap> swaps;
     rank_swaps(swaps, false);
     if ((int) swaps.size() > o.adapt_swaps) swaps.resize((size_t) o.adapt_swaps);
+    aei_prefetch_predicted_sources(swaps);
     std::vector<int> staged_on;   // the devices whose adapt streams hold copies back (-1: CUDA0)
     const auto copy_back = [&](int32_t layer, int32_t slot, uint8_t* dst) -> bool {
         const int stn = multi_gpu ? stage_of(layer) : 0;
@@ -364,6 +379,7 @@ bool Runtime::xq_round(std::vector<Swap>* ranked) {
     if (swaps.size() > cap) swaps.resize(cap);
     // a round with base share to spare spends it on experts routed about once lately
     if (xq_across && swaps.size() < base) rank_once(swaps, std::min(base - swaps.size(), kOnceSwaps));
+    aei_prefetch_predicted_sources(swaps);
     xq.clear();
     size_t n_noplace = 0;
     const auto& lay = basalt::kernels::cpu::expert_layout();
