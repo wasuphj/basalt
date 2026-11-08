@@ -349,6 +349,13 @@ endif()
 # streaming, GPU-independent trace policy comparison tool
 add_executable(aei-replay tools/aei_replay.cpp)
 target_include_directories(aei-replay PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# AEI bounded sparse transition index, shadow-only
+if(BUILD_TESTING)
+  add_executable(aei_transitions_test tests/core/aei_transitions_test.cpp)
+  target_include_directories(aei_transitions_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_transitions_test COMMAND aei_transitions_test)
+  set_tests_properties(aei_transitions_test PROPERTIES TIMEOUT 60)
+endif()
 # AEI CPU/GPU cost estimator, shadow-only and CPU-testable
 if(BUILD_TESTING)
   add_executable(aei_scheduler_test tests/core/aei_scheduler_test.cpp)
