@@ -539,6 +539,7 @@ private:
     void apply_pending(bool wait, bool exchanges = true);
     void rank_swaps(std::vector<Swap>& swaps, bool across);
     void aei_prefetch_predicted_sources(const std::vector<Swap>& swaps);
+    bool aei_export_baseline_residents(const std::string& path, std::string& err);
     void rank_once(std::vector<Swap>& swaps, size_t room);
     bool adapt();
     void xq_settle();
