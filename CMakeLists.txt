@@ -349,6 +349,15 @@ endif()
 # streaming, GPU-independent trace policy comparison tool
 add_executable(aei-replay tools/aei_replay.cpp)
 target_include_directories(aei-replay PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# Streaming shadow evaluation of sparse next-expert predictions.
+add_executable(aei-shadow tools/aei_shadow.cpp)
+target_include_directories(aei-shadow PRIVATE ${CMAKE_SOURCE_DIR}/include)
+if(BUILD_TESTING)
+  add_executable(aei_shadow_test tests/core/aei_shadow_test.cpp)
+  target_include_directories(aei_shadow_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_shadow_test COMMAND aei_shadow_test)
+  set_tests_properties(aei_shadow_test PROPERTIES TIMEOUT 60)
+endif()
 # AEI bounded sparse transition index, shadow-only
 if(BUILD_TESTING)
   add_executable(aei_transitions_test tests/core/aei_transitions_test.cpp)
