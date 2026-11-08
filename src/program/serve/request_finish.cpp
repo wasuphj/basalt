@@ -292,6 +292,12 @@ Flow Request::complete() {
                      runtime_.remote_experts[(size_t) r].ms_begin() - begin_before[(size_t) r],
                      runtime_.remote_experts[(size_t) r].ms_wait() - wait_before[(size_t) r]);
 
+    // The policy FSM consumes only successfully completed decode metrics.
+    // It proposes the next request's policy; never changes CUDA state here.
+    runtime_.aei_record_auto_request(
+        produced_n, decode_ms,
+        !cancelled && !ram_out && kv_stop.empty() && produced_n > 0);
+
     return Flow::next;
 }
 
