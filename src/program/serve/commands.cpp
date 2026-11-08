@@ -86,7 +86,7 @@ Flow Runtime::dispatch() {
                 if (!aei_cpu_costs) aei_cpu_costs = std::make_unique<basalt::core::aei::ShadowScheduler>();
                 ver.set_aei_cpu_cost_probe(aei_cpu_costs.get());
                 ver_b.set_aei_cpu_cost_probe(aei_cpu_costs.get());
-                std::printf("PROBE cost on\\n");
+                std::printf("PROBE cost on\n");
             }
         } else if (line == "PROBE cost off") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
@@ -95,7 +95,7 @@ Flow Runtime::dispatch() {
                 ver.set_aei_cpu_cost_probe(nullptr);
                 ver_b.set_aei_cpu_cost_probe(nullptr);
                 aei_cpu_costs.reset();
-                std::printf("PROBE cost off\\n");
+                std::printf("PROBE cost off\n");
             }
         } else if (line == "PROBE cost report") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
@@ -105,10 +105,10 @@ Flow Runtime::dispatch() {
                 for (size_t b = 0; b < basalt::core::aei::ShadowScheduler::kBuckets; ++b) {
                     const uint32_t n = (uint32_t) 1 << b;
                     const auto cpu = aei_cpu_costs->estimate(basalt::core::aei::Device::cpu, n);
-                    std::printf("AEI_COST cpu %u %u %llu\\n", n, cpu.observations,
+                    std::printf("AEI_COST cpu %u %u %llu\n", n, cpu.observations,
                                 (unsigned long long)cpu.execution_ns);
                 }
-                std::printf("PROBE cost end dropped_samples=%llu\\n",
+                std::printf("PROBE cost end dropped_samples=%llu\n",
                             (unsigned long long)aei_cpu_costs->dropped_samples());
             }
         } else if (line == "PROBE trace on") {
@@ -116,7 +116,7 @@ Flow Runtime::dispatch() {
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 if (!aei_trace) aei_trace = std::make_unique<basalt::core::aei::RouterEventBuffer>();
-                std::printf("PROBE trace on capacity=%zu\\n",
+                std::printf("PROBE trace on capacity=%zu\n",
                             basalt::core::aei::RouterEventBuffer::kCapacity);
             }
         } else if (line == "PROBE trace off") {
@@ -127,7 +127,7 @@ Flow Runtime::dispatch() {
                 ver_b.set_aei_router_trace(nullptr, 0);
                 // Events already in the buffer are discarded on explicit shutdown.
                 aei_trace.reset();
-                std::printf("PROBE trace off\\n");
+                std::printf("PROBE trace off\n");
             }
         } else if (line == "PROBE trace drain") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
@@ -139,12 +139,12 @@ Flow Runtime::dispatch() {
                     const size_t count = aei_trace->drain(events.data(), events.size());
                     for (size_t i = 0; i < count; ++i) {
                         const auto& e = events[i];
-                        std::printf("AEI %llu %llu %u %u\\n",
+                        std::printf("AEI %llu %llu %u %u\n",
                                     (unsigned long long)e.stream,
                                     (unsigned long long)e.sequence,
                                     (unsigned)e.layer, (unsigned)e.expert);
                     }
-                    std::printf("PROBE trace end count=%zu dropped_capacity=%llu dropped_contention=%llu\\n",
+                    std::printf("PROBE trace end count=%zu dropped_capacity=%llu dropped_contention=%llu\n",
                                 count, (unsigned long long)aei_trace->dropped_capacity(),
                                 (unsigned long long)aei_trace->dropped_contention());
                 }
