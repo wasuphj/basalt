@@ -394,3 +394,16 @@ handle Prefill and Decode. Large prompts can overrun the buffer:
 when this happens the final completeness receipt fails closed rather
 than treating a truncated stream as evidence. The capture is
 experimental and remains OFF by default.
+
+## Predicted host source read-ahead before GPU promotion
+
+The predictive admission policy now also issues up to eight
+`ExpertSource::prefetch(layer, expert)` hints for chosen incoming
+candidates **before** its ordinary CUDA slot refill. This is the
+existing file-backed expert source's mapped-page read-ahead, which can
+overlap storage and CPU work with the subsequent cache promotion.
+It is used by both the standard adaptive `adapt()` loop and the
+accelerated `xq_round()` path. Sources already resident in RAM may
+ignore these hints. The predictor never requests extra GPU slots or
+changes weight data, and the hint is inactive unless
+`PROBE policy prefetch on` was explicitly enabled.
