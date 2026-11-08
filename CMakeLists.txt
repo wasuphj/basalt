@@ -349,6 +349,17 @@ endif()
 # streaming, GPU-independent trace policy comparison tool
 add_executable(aei-replay tools/aei_replay.cpp)
 target_include_directories(aei-replay PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# CPU E2E for asynchronous AEI trace file output and bounded metadata
+if(BUILD_TESTING)
+  add_executable(aei_writer_test tests/core/aei_writer_test.cpp)
+  target_link_libraries(aei_writer_test PRIVATE platform Threads::Threads)
+  basalt_cpu_test(NAME aei_writer_test COMMAND aei_writer_test)
+  set_tests_properties(aei_writer_test PROPERTIES TIMEOUT 60)
+  add_executable(aei_memory_budget_test tests/core/aei_memory_budget_test.cpp)
+  target_include_directories(aei_memory_budget_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_memory_budget_test COMMAND aei_memory_budget_test)
+  set_tests_properties(aei_memory_budget_test PROPERTIES TIMEOUT 60)
+endif()
 # AEI verifier's opt-in host-visible Top-K capture helper
 if(BUILD_TESTING)
   add_executable(aei_router_capture_test tests/core/aei_router_capture_test.cpp)
