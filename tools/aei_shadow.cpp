@@ -1,5 +1,5 @@
 // Ordered router-event shadow evaluation. No GPU, no route substitutions.
-#include "basalt/core/aei_ingest.hpp"
+#include "basalt/core/aei_multistream.hpp"
 #include <charconv>
 #include <cstdint>
 #include <fstream>
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     }
     std::ifstream input(argv[3]);
     if (!input) { std::cerr << "cannot open trace\n"; return 2; }
-    basalt::core::aei::OrderedShadowIngest shadow(
+    basalt::core::aei::MultiStreamShadow shadow(
         static_cast<uint32_t>(experts), static_cast<uint32_t>(layers));
     std::string line;
     uint64_t row = 0;

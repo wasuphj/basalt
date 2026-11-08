@@ -73,10 +73,14 @@ The predictor evaluates each successor before learning that transition.
 A changed stream resets only the predecessor, retaining prior statistics;
 a missing sequence interval also resets the predecessor and increments
 `missing_events`. Duplicate or reversed sequence numbers are rejected.
-The CLI expects events from each request as a contiguous stream; events
-from interleaved streams must be demultiplexed into contiguous blocks
-before replay. Do not reconstruct temporal sequences by iterating
-`route_hist_take()` counts: those are unordered aggregates.
+The CLI accepts interleaved request streams and tracks up to 32 active
+stream cursors with one shared predictor. A cursor lost to capacity-based
+LRU replacement starts fresh when its stream returns; no fabricated
+predecessor is used. Events must still be ordered **within** each stream,
+and once a stream's cursor is evicted its previous ordering cannot be
+authenticated without an external durable sequence ledger. Do not
+reconstruct temporal sequences by iterating `route_hist_take()` counts:
+those are unordered aggregates.
 
 The output's Top-1/Top-4 hits are causal offline prediction metrics.
 They do not establish cache residency, timely prefetch, wall-clock
