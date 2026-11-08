@@ -30,6 +30,14 @@ bool read_expert_profile(const FileRange& range, int64_t n_layers, int64_t n_exp
     std::memcpy(hdr, raw_file.data() + at, sizeof hdr);
     at += sizeof hdr;
     const uint32_t version = hdr[0], nl = hdr[1], ne = hdr[2], want = hdr[3], n_ranked = hdr[4];
+    if (version != 1) {
+        err = "read_expert_profile: unsupported profile version";
+        return false;
+    }
+    if (n_layers <= 0 || n_expert <= 0 || n_layers > 65535 || n_expert > 65535) {
+        err = "read_expert_profile: invalid model geometry";
+        return false;
+    }
     if ((int64_t) nl != n_layers || (int64_t) ne != n_expert) {
         char buf[256];
         std::snprintf(buf, sizeof buf,
@@ -42,6 +50,18 @@ bool read_expert_profile(const FileRange& range, int64_t n_layers, int64_t n_exp
         err = "read_expert_profile: the header claims more ranked pairs than slots";
         return false;
     }
+    const size_t count = (size_t) n_layers * (size_t) n_expert;
+    if (want > count || n_ranked > count) {
+        err = "read_expert_profile: rank count exceeds model geometry";
+        return false;
+    }
+    const size_t expected = sizeof hdr + (size_t) n_ranked * 2 * sizeof(uint16_t) +
+                            count * sizeof(int32_t);
+    if (raw_file.size() != expected) {
+        err = "read_expert_profile: truncated or trailing profile data";
+        return false;
+    }
+    std::vector<int32_t> expected_rank(count, -1);
     ranked.assign(n_ranked, {0, 0});
     std::vector<uint16_t> raw((size_t) n_ranked * 2);
     if (n_ranked > 0) {
@@ -60,10 +80,20 @@ bool read_expert_profile(const FileRange& range, int64_t n_layers, int64_t n_exp
             err = buf;
             return false;
         }
+        const size_t index = (size_t) l * (size_t) n_expert + (size_t) e;
+        if (expected_rank[index] != -1) {
+            err = "read_expert_profile: duplicate ranked pair";
+            return false;
+        }
+        expected_rank[index] = (int32_t) i;
         ranked[(size_t) i] = {l, e};
     }
+    at += raw.size() * sizeof(uint16_t);
+    if (std::memcmp(raw_file.data() + at, expected_rank.data(), count * sizeof(int32_t)) != 0) {
+        err = "read_expert_profile: rank table does not match ranked pairs";
+        return false;
+    }
     slots = (int64_t) want;
-    (void) version;   // a future format bumps it; the layout check above is what protects this reader today
     return true;
 }
 
