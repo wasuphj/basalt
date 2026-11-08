@@ -363,6 +363,13 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME aei_trace_test COMMAND aei_trace_test)
   set_tests_properties(aei_trace_test PROPERTIES TIMEOUT 60)
 endif()
+# Bounded multi-request causal shadow evaluation
+if(BUILD_TESTING)
+  add_executable(aei_multistream_test tests/core/aei_multistream_test.cpp)
+  target_include_directories(aei_multistream_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_multistream_test COMMAND aei_multistream_test)
+  set_tests_properties(aei_multistream_test PROPERTIES TIMEOUT 60)
+endif()
 # Continuity-safe causal ingestion of ordered router events
 if(BUILD_TESTING)
   add_executable(aei_ingest_test tests/core/aei_ingest_test.cpp)
