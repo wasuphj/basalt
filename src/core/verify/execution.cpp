@@ -268,6 +268,18 @@ int Verifier::serve_poll(PoolMultiFn pool, void* user, std::string& err) {
         const auto cpu_service_start = observe_cpu ? Clock::now() : Clock::time_point{};
         if (dm_ != nullptr) {   // the ring's own rows and tiers: the pool computes the CPU's entries only
             const basalt::kernels::DmRing& R = dm_->h_ring[k];
+            // The CUDA route kernel writes every Top-K ID (not only CPU
+            // misses) to DmRing::ids, then a system fence and host doorbell.
+            // Verify the ring header before interpreting those mapped rows.
+            if (router_capture_.enabled()) {
+                const uint64_t entries = (uint64_t)n * (uint64_t)ss.k;
+                if (R.n_tok == n && R.layer == l &&
+                    entries <= (uint64_t)basalt::kernels::kDmCap)
+                    router_capture_.capture((uint32_t)l, R.ids, (size_t)n,
+                                            (size_t)ss.k, (uint32_t)g.n_expert);
+                else if (entries <= SIZE_MAX)
+                    router_capture_.skip((size_t)entries);
+            }
             sink_.ext_kind = R.kind;
             if (pool != nullptr)
                 pool(user, dm_->h_x + (size_t) k * dm_->x_stride, R.ids, n, ss.k, h_ymiss_, l);
