@@ -79,7 +79,37 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line == "PROBE cost on") {
+        if (line == "PROBE policy cost on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (g.n_layers <= 0 || g.n_layers > (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers)
+                    perr = "PROBE policy: layer count exceeds bounded model";
+                else {
+                    if (!aei_rank_costs)
+                        aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+                    ver.set_aei_cost_placement_probe(aei_rank_costs.get());
+                    ver_b.set_aei_cost_placement_probe(aei_rank_costs.get());
+                    std::printf("PROBE policy cost on reference_ns=%llu\n",
+                        (unsigned long long)aei_rank_costs->reference_cost_ns((size_t)g.n_layers));
+                }
+            }
+        } else if (line == "PROBE policy baseline") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                ver.set_aei_cost_placement_probe(nullptr);
+                ver_b.set_aei_cost_placement_probe(nullptr);
+                aei_rank_costs.reset();
+                std::printf("PROBE policy baseline\n");
+            }
+        } else if (line == "PROBE policy stats") {
+            if (!aei_rank_costs) perr = "PROBE policy: baseline";
+            else {
+                std::printf("PROBE policy cost reference_ns=%llu\n",
+                    (unsigned long long)aei_rank_costs->reference_cost_ns((size_t)g.n_layers));
+            }
+        } else if (line == "PROBE cost on") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -206,7 +236,7 @@ Flow Runtime::dispatch() {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 (void) probe_adapt(line, perr);
             }
-        } else if (line != "PROBE rates") perr = "PROBE: expected rates, set, adapt, trace or cost";
+        } else if (line != "PROBE rates") perr = "PROBE: expected rates, set, adapt, trace, cost or policy";
         else if (batch_on()) perr = "PROBE: not while batch slots are decoding";
         else {
             if (ba_job) { ba_thr.join(); ba_job = false; }
