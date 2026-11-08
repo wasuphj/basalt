@@ -1,6 +1,7 @@
 // src/core/model_file.cpp - the .basalt reader, the byte ranges the loaders share, a small JSON parser and the
 // hc8 table.  Host only.  See the header.
 #include "basalt/core/model_file.hpp"
+#include "basalt/core/aei_sha256.hpp"
 
 #include "basalt/artifact/gguf_reader.hpp"
 #include "basalt/platform/file.hpp"
@@ -359,7 +360,10 @@ std::string ModelFile::expert_profile_identity() const {
         }
         out.push_back('\n');
     }
-    return out;
+    basalt::core::aei::Sha256 digest;
+    digest.update(out);
+    return "basalt-model-sha256-v3:" +
+           basalt::core::aei::Sha256::hex(digest.finish()) + "\n";
 }
 
 const ModelFile::Section* ModelFile::find(const std::string& name) const {
