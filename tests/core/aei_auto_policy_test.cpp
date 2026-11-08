@@ -86,5 +86,18 @@ int main() {
     CHECK(audit.phase() == AutoPhase::cooldown);
     CHECK(audit.active() == AutoArm::baseline);
     CHECK(audit.audits() == 2);
+    AutoPolicyController combo;
+    constexpr uint32_t mix = (1u << (unsigned)AutoArm::baseline) |
+                             (1u << (unsigned)AutoArm::prefetch_split);
+    combo.enable(mix);
+    CHECK(combo.supports(AutoArm::prefetch_split));
+    for (uint32_t i=0; i<AutoPolicyController::kExploreSamples; ++i)
+        combo.observe(128, 1280.0, true, 128, 1000.0);
+    CHECK(combo.active() == AutoArm::prefetch_split);
+    for (uint32_t i=0; i<AutoPolicyController::kExploreSamples; ++i)
+        combo.observe(128, 780.0, true, 128, 980.0);
+    CHECK(combo.phase() == AutoPhase::exploit);
+    CHECK(combo.active() == AutoArm::prefetch_split);
+    CHECK(std::string(auto_arm_name(AutoArm::prefetch_split)) == "prefetch+split");
     std::puts("aei_auto_policy_test: OK");
 }
