@@ -289,6 +289,10 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
         err = "AEI auto policy: execution still in flight";
         return false;
     }
+    if (arm >= AutoArm::count) {
+        err = "AEI auto policy: unsupported state transition";
+        return false;
+    }
     const uint64_t total = g.n_layers > 0 && g.n_expert > 0
         ? (uint64_t)g.n_layers * (uint64_t)g.n_expert : 0;
     // Validate before deactivating the previous policy.
@@ -312,8 +316,40 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
         return false;
     }
 
-    // All changes are allowed only at idle request boundaries. Removing a
-    // callback's observer always precedes destroying its memory.
+    // Prepare GPU split rollback before detaching an active policy.
+    // A failed CUDA LUT update leaves the current observer bindings
+    // intact. When both verifier chains are present, restore together.
+    const bool old_stage = aei_split_costs &&
+        (!aei_auto.enabled() || aei_auto_applied == AutoArm::split ||
+         aei_auto_applied == AutoArm::prefetch_split);
+    const bool next_stage = arm == AutoArm::split ||
+                            arm == AutoArm::prefetch_split;
+    if (old_stage && !next_stage) {
+        const bool first = ver.aei_staged_split_available();
+        const bool second = ver_b.aei_staged_split_available();
+        std::string first_error, second_error;
+        const bool ok_first = !first ||
+            ver.aei_update_staged_split(nullptr, true, first_error);
+        if (!ok_first) {
+            err = "AEI auto policy: primary staged-share rollback: " + first_error;
+            return false;
+        }
+        const bool ok_second = !second ||
+            ver_b.aei_update_staged_split(nullptr, true, second_error);
+        if (!ok_second) {
+            // Attempt to keep the previous split configuration if only
+            // one chain was restored. Do not silently claim success.
+            if (first) {
+                std::string restore_error;
+                (void)ver.aei_update_staged_split(
+                    aei_split_costs.get(), false, restore_error);
+            }
+            err = "AEI auto policy: secondary staged-share rollback: " + second_error;
+            return false;
+        }
+        aei_split_last_cpu_ns = 0;
+    }
+    // Only after stage rollback succeeded may callbacks be detached.
     aei_stop_prefetch_io();
     ver.set_aei_cost_placement_probe(nullptr);
     ver_b.set_aei_cost_placement_probe(nullptr);
@@ -322,22 +358,6 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     ver.set_aei_predictive_prefetch(nullptr, 0);
     ver_b.set_aei_predictive_prefetch(nullptr, 0);
     sp.set_aei_predictive_prefetch(nullptr);
-    if (aei_split_costs &&
-        (!aei_auto.enabled() || (aei_auto_applied == AutoArm::split ||
-          aei_auto_applied == AutoArm::prefetch_split))) {
-        std::string ignored;
-        if (ver.aei_staged_split_available() &&
-            !ver.aei_update_staged_split(nullptr, true, ignored)) {
-            err = "AEI auto policy: cannot restore primary GPU split: " + ignored;
-            return false;
-        }
-        if (ver_b.aei_staged_split_available() &&
-            !ver_b.aei_update_staged_split(nullptr, true, ignored)) {
-            err = "AEI auto policy: cannot restore secondary GPU split: " + ignored;
-            return false;
-        }
-        aei_split_last_cpu_ns = 0;
-    }
     // During automatic exploration retain observer histories between
     // arms. Reset only at an explicit stop; a baseline audit should not
     // destroy the winning policy's learned transitions or CPU estimates.
@@ -386,6 +406,7 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
             sp.set_aei_predictive_prefetch(aei_prefetch.get());
             ver.set_aei_cost_placement_probe(aei_split_costs.get());
             ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
+            aei_start_prefetch_io();
             break;
         default:
             err = "AEI auto policy: invalid policy";
