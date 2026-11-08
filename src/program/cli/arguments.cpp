@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <sstream>
 
@@ -116,6 +117,15 @@ std::optional<int> parse_options(int argc, char** argv, CommonOptions& o, const 
         }
         else if (a == "--peer-reserve-mib") o.peer_reserve_mib = std::atoi(next("--peer-reserve-mib"));
         else if (a == "--expert-profile") o.expert_profile = next("--expert-profile");
+        else if (a == "--host-pool-gib") {
+            const char* text = next("--host-pool-gib"); char* end = nullptr;
+            const double gib = std::strtod(text, &end);
+            if (end == text || *end || !std::isfinite(gib) || gib <= 0 || gib >= double(SIZE_MAX) / 1073741824.0) {
+                basalt::log::error("basalt generate", "--host-pool-gib needs a finite positive size"); return 2;
+            }
+            o.host_pool_bytes = uint64_t(gib * 1073741824.0) / 4096 * 4096;
+            if (!o.host_pool_bytes) { basalt::log::error("basalt generate", "--host-pool-gib is smaller than a page"); return 2; }
+        }
         else if (a == "--resident-budget-gib") {
             const double gib = std::atof(next("--resident-budget-gib"));
             if (!(gib > 0.0)) { basalt::log::error("basalt generate", "--resident-budget-gib needs N > 0"); return 2; }
