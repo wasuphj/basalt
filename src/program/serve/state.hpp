@@ -531,6 +531,7 @@ private:
     bool adapt_peers(const std::vector<int32_t>& r0, std::string& perr);
     void apply_pending(bool wait, bool exchanges = true);
     void rank_swaps(std::vector<Swap>& swaps, bool across);
+    void aei_prefetch_predicted_sources(const std::vector<Swap>& swaps);
     void rank_once(std::vector<Swap>& swaps, size_t room);
     bool adapt();
     void xq_settle();
