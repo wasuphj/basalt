@@ -286,9 +286,9 @@ bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
             return false;
         }
         if (!d->stage_dma_ns) {
-            // One-off PCIe calibration on the actual staging stream; this
-            // uses temporary pinned host pages and the existing device stage
-            // allocation, never the routed expert weights or their slots.
+            // The real staging_ allocation holds actual expert weights
+            // and may be reused by subsequent graphs. Never overwrite it
+            // with calibration bytes, even between requests.
             const size_t bytes = (size_t)d->stage_blob_bytes;
             if (!bytes || bytes > 16u * 1024u * 1024u) {
                 error = "AEI staging blob is too large for bounded DMA calibration";
@@ -299,20 +299,32 @@ bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
                 error = "AEI DMA calibration could not reserve temporary pinned memory";
                 return false;
             }
+            void* scratch_device = nullptr;
+            if (cudaMalloc(&scratch_device, bytes) != cudaSuccess) {
+                basalt::core::release_pinned_host(pinned);
+                cudaGetLastError();
+                error = "AEI DMA calibration cannot reserve temporary device memory";
+                return false;
+            }
             std::memset(pinned, 0, bytes);
             cudaEvent_t started = nullptr, finished = nullptr;
-            bool ok = cudaEventCreate(&started) == cudaSuccess &&
-                      cudaEventCreate(&finished) == cudaSuccess;
+            bool ok = cudaEventCreate(&started) == cudaSuccess;
+            if (ok) ok = cudaEventCreate(&finished) == cudaSuccess;
             float elapsed_ms = 0.0f;
             if (ok) {
                 ok = cudaEventRecord(started, d->st_s) == cudaSuccess &&
-                     cudaMemcpyAsync(staging_, pinned, bytes, cudaMemcpyHostToDevice, d->st_s) == cudaSuccess &&
+                     cudaMemcpyAsync(scratch_device, pinned, bytes,
+                                     cudaMemcpyHostToDevice, d->st_s) == cudaSuccess &&
                      cudaEventRecord(finished, d->st_s) == cudaSuccess &&
                      cudaEventSynchronize(finished) == cudaSuccess &&
                      cudaEventElapsedTime(&elapsed_ms, started, finished) == cudaSuccess;
             }
+            // Even if event submission failed after the memcpy was queued,
+            // do not release either allocation until the stream is idle.
+            if (cudaStreamSynchronize(d->st_s) != cudaSuccess) ok = false;
             if (started) cudaEventDestroy(started);
             if (finished) cudaEventDestroy(finished);
+            cudaFree(scratch_device);
             basalt::core::release_pinned_host(pinned);
             if (!ok || !(elapsed_ms > 0.0f)) {
                 error = "AEI staging DMA measurement failed";

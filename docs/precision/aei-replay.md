@@ -361,8 +361,12 @@ CPU miss time observer to that planner without enabling experimental
 cache-rank or next-expert policies. Once enough CPU samples exist,
 `PROBE policy split refresh` can explicitly recompute its lookup.
 
-On the first refresh, Basalt measures one pinned-host → GPU staging
-copy with CUDA events on the existing staging stream (at idle), and
+On the first refresh, Basalt measures one pinned-host → **temporary
+GPU scratch allocation** copy with CUDA events on the existing staging
+stream (at idle). It never overwrites the live Expert staging weights.
+The worker synchronizes the copy stream before releasing scratch
+buffers, including on partial submission failure. The temporary
+measurement is bounded to 16 MiB of host and GPU scratch. It
 combines measured DMA nanoseconds per blob with the observed CPU
 nanoseconds per miss. The dynamic plan minimizes the estimated maximum
 of CPU remaining work and GPU staging work, bounded by the original
