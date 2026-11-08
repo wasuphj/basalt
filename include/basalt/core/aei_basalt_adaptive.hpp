@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -20,17 +21,12 @@ public:
     BasaltAdaptiveBaseline(size_t layers, size_t experts_per_layer,
                            size_t swaps_per_round, uint32_t every_windows,
                            float decay, float promote_margin = 0.0f)
-        : layers_(layers), experts_(experts_per_layer),
+        : layers_(validated_layers(layers,experts_per_layer,every_windows,decay,promote_margin)),
+          experts_(experts_per_layer),
           swaps_(swaps_per_round), every_(every_windows),
           decay_(decay), margin_(promote_margin),
-          usage_(layers * experts_per_layer, 0.0f),
-          resident_(layers * experts_per_layer, 0) {
-        if (!layers || !experts_per_layer || layers > 128 ||
-            experts_per_layer > 65535 ||
-            layers > (1u << 20) / experts_per_layer ||
-            !every_ || !(decay_ >= 0.0f && decay_ <= 1.0f))
-            throw std::invalid_argument("invalid baseline replay geometry or adaptation policy");
-    }
+          usage_(layers_ * experts_, 0.0f),
+          resident_(layers_ * experts_, 0) {}
 
     void add_initial(size_t layer, size_t expert) {
         if (sealed_) throw std::logic_error("initial residency already sealed");
@@ -105,6 +101,15 @@ public:
         return resident_[flat(layer,expert)] != 0;
     }
 private:
+    static size_t validated_layers(size_t layers, size_t experts, uint32_t every,
+                                   float decay, float margin) {
+        if (!layers || !experts || layers > 128 ||
+            experts > 65535 || layers > (1u<<20)/experts ||
+            !every || !std::isfinite(decay) || decay < 0 || decay > 1 ||
+            !std::isfinite(margin) || margin < 0)
+            throw std::invalid_argument("invalid baseline geometry or adaptation policy");
+        return layers;
+    }
     size_t flat(size_t layer,size_t expert) const {
         if (layer >= layers_ || expert >= experts_)
             throw std::out_of_range("baseline expert geometry");
