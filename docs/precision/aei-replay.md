@@ -325,3 +325,25 @@ the embedded model profile, rather than guessing based on matching
 layer and expert counts. A model without all four required sections
 cannot write a bound learned profile. This is an identity check, not
 cryptographic verification of all model file bytes at runtime.
+
+## Live sparse next-expert prefetch (experimental)
+
+`PROBE policy prefetch on` now connects the bounded sparse Top-4
+transition table to original verifier Top-K selections. Each request
+has its own predecessor, so transitions cannot learn across request
+boundaries. The table learns on the inference producer using a
+nonblocking try-lock, predicting the next two possible experts after
+each selected expert. After at least three observations of an edge,
+candidate experts receive a short-lived boost (8,192 observed routing
+entries) in the **existing adaptive cache swap ranking**. This
+admits likely future GPU residents through the engine's ordinary
+asynchronous CUDA Expert copy and swap machinery, respecting its
+slot ownership, swap caps, remote ownership and transfer ordering.
+
+This is predictive *admission* during existing adaptation rounds, not
+a separate speculative CUDA DMA engine or a forced immediate transfer.
+No prefix/routing logits are changed. The policy is explicitly enabled
+and mutually exclusive with cost- and reuse-weighted placement; use
+`PROBE policy baseline` to detach it and return to the original cache
+policy. `PROBE policy stats` prints bounded metadata and skipped
+samples. A default launch never allocates or updates the advisor.
