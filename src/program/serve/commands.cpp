@@ -79,7 +79,46 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line == "PROBE policy prefetch on") {
+        if (line == "PROBE policy split on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE split: inference in flight";
+            else if (aei_rank_costs || aei_reuse_index || aei_prefetch) {
+                perr = "PROBE split: return to baseline before enabling a different policy";
+            } else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (g.n_layers <= 0 ||
+                    g.n_layers > (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers) {
+                    perr = "PROBE split: layer count outside bounded cost model";
+                } else {
+                    if (!aei_split_costs)
+                        aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+                    ver.set_aei_cost_placement_probe(aei_split_costs.get());
+                    ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
+                    std::printf("PROBE policy split on: measuring CPU misses\n");
+                }
+            }
+        } else if (line == "PROBE policy split refresh") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE split: inference in flight";
+            else if (!aei_split_costs) perr = "PROBE split: not enabled";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                std::string e0, e1;
+                const bool ok0 = ver.aei_update_staged_split(aei_split_costs.get(), false, e0);
+                const bool ok1 = ver_b.aei_update_staged_split(aei_split_costs.get(), false, e1);
+                if (!ok0 || !ok1) {
+                    std::string ignored;
+                    if (ok0) (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    if (ok1) (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                    perr = "PROBE split: " + (ok0 ? e1 : e0);
+                } else {
+                    std::printf("PROBE policy split updated cpu_ns=%llu dma_ns=%llu/%llu\n",
+                        (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
+                        (unsigned long long)ver.aei_staged_dma_ns(),
+                        (unsigned long long)ver_b.aei_staged_dma_ns());
+                }
+            }
+        } else if (line == "PROBE policy prefetch on") {
+            if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
+            else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -102,6 +141,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy reuse on") {
+            if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
+            else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -125,6 +166,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy cost on") {
+            if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
+            else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -158,10 +201,23 @@ Flow Runtime::dispatch() {
                 ver.set_aei_predictive_prefetch(nullptr, 0);
                 ver_b.set_aei_predictive_prefetch(nullptr, 0);
                 aei_prefetch.reset();
+                if (aei_split_costs) {
+                    std::string ignored;
+                    (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                    ver.set_aei_cost_placement_probe(nullptr);
+                    ver_b.set_aei_cost_placement_probe(nullptr);
+                    aei_split_costs.reset();
+                }
                 std::printf("PROBE policy baseline\n");
             }
         } else if (line == "PROBE policy stats") {
-            if (aei_prefetch) {
+            if (aei_split_costs) {
+                std::printf("PROBE policy split cpu_ns=%llu dma_ns=%llu/%llu\n",
+                            (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
+                            (unsigned long long)ver.aei_staged_dma_ns(),
+                            (unsigned long long)ver_b.aei_staged_dma_ns());
+            } else if (aei_prefetch) {
                 std::printf("PROBE policy prefetch metadata_bytes=%zu dropped_samples=%llu\n",
                             aei_prefetch->metadata_bytes(),
                             (unsigned long long)aei_prefetch->dropped_samples());
