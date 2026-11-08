@@ -40,7 +40,10 @@ public:
         ++result_.accesses;
         if (c.last != 0) {
             const uint64_t distance = now - c.last;
-            c.interval = c.interval == 0 ? distance : (3 * c.interval + distance) / 4;
+            // Compute the EWMA without a potentially overflowing 3*x sum.
+            if (c.interval == 0) c.interval = distance;
+            else if (distance >= c.interval) c.interval += (distance - c.interval) / 4;
+            else c.interval -= (c.interval - distance) / 4;
         }
         c.last = now;
         if (c.frequency < 65535) ++c.frequency;
@@ -105,7 +108,11 @@ private:
             case Policy::least_stale: {
                 // Next-use heuristic from EWMA reuse interval (not SpecMD's exact policy).
                 const uint64_t age = now - c.last;
-                return c.interval > age ? c.interval - age : 0;
+                const uint64_t remaining = c.interval > age ? c.interval - age : 0;
+                // Higher priority means the expert is expected sooner.
+                // The eviction loop removes the lowest priority, thus the
+                // expert with the farthest predicted reuse is displaced.
+                return std::numeric_limits<uint64_t>::max() - remaining;
             }
         }
         return 0;
