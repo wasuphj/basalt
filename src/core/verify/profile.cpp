@@ -1,5 +1,6 @@
 #include "common.hpp"
 #include "expert_plan.hpp"
+#include "basalt/core/aei_stage_metrics.hpp"
 #include "basalt/core/load_progress.hpp"
 #include "basalt/core/verify.hpp"
 #include "basalt/core/remote_expert_opt.hpp"
@@ -269,16 +270,19 @@ void Verifier::collect_profile() {
             prof_sum_[kind][i] += (double) (x - prev);
             prev = x;
         }
-        // Existing --profile GPU timestamps already bracket the PCIe
-        // Expert group. Count only actual staged entries; CPU misses
-        // alone would overstate GPU work in a hybrid split.
+        // CUDA publishes the complete mapped router kinds before the
+        // doorbell. Kind 1 denotes GPU-staged CPU-tier Experts.
+        // n_cpu is the REMAINING CPU entry count after staging, not the
+        // number of unique GPU-stage groups. Count groups from IDs.
         if (dm_ && dm_->stage_k && dm_->h_ring &&
             l >= lb_ && l < le_) {
             const auto& ring = dm_->h_ring[(size_t)(l-lb_)];
-            const int32_t misses = ring.n_cpu;
-            if (ring.layer == l && misses > 0 &&
-                misses <= (int32_t)basalt::kernels::kDmCap) {
-                const int32_t staged = dm_->stage_active[(size_t)misses];
+            const uint64_t entries = ring.n_tok > 0 && ss_->k > 0
+                ? (uint64_t)ring.n_tok * (uint64_t)ss_->k : 0;
+            if (ring.layer == l && entries > 0 &&
+                entries <= (uint64_t)basalt::kernels::kDmCap) {
+                const uint32_t staged = aei::staged_expert_groups(
+                    ring.ids, ring.kind, (size_t)entries, (uint32_t)g.n_expert);
                 const double elapsed = gap(at(l,22),at(l,21));
                 if (staged > 0 && elapsed >= (double)staged &&
                     elapsed <= 1e12) {

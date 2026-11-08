@@ -435,6 +435,12 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME aei_auto_policy_test COMMAND aei_auto_policy_test)
   set_tests_properties(aei_auto_policy_test PROPERTIES TIMEOUT 60)
 endif()
+# Published routed-kind to actual GPU staged group accounting
+if(BUILD_TESTING)
+  add_executable(aei_stage_metrics_test tests/core/aei_stage_metrics_test.cpp)
+  target_include_directories(aei_stage_metrics_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_stage_metrics_test COMMAND aei_stage_metrics_test)
+endif()
 # Adaptive CPU/GPU staged-sharing plan, CPU-only arithmetic
 if(BUILD_TESTING)
   add_executable(aei_split_plan_test tests/core/aei_split_plan_test.cpp)
