@@ -254,6 +254,10 @@ bool Verifier::dm_init(std::string& err) {
     return true;
 }
 
+bool Verifier::aei_staged_split_available() const noexcept {
+    return dm_ && dm_->stage_k && dm_->st_s && dm_->stage_slots > 0;
+}
+
 uint64_t Verifier::aei_staged_dma_ns() const {
     return dm_ ? dm_->stage_dma_ns : 0;
 }
