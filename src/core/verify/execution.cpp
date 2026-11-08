@@ -264,6 +264,8 @@ int Verifier::serve_poll(PoolMultiFn pool, void* user, std::string& err) {
             router_capture_.capture((uint32_t) l, h_ids_, (size_t) n,
                                     (size_t) ss.k, (uint32_t) g.n_expert);
         if (remote_opt_) remote_opt_->begin(h_w_, 0, n);
+        const bool observe_cpu = aei_cpu_cost_ != nullptr && pool != nullptr;
+        const auto cpu_service_start = observe_cpu ? Clock::now() : Clock::time_point{};
         if (dm_ != nullptr) {   // the ring's own rows and tiers: the pool computes the CPU's entries only
             const basalt::kernels::DmRing& R = dm_->h_ring[k];
             sink_.ext_kind = R.kind;
@@ -273,6 +275,14 @@ int Verifier::serve_poll(PoolMultiFn pool, void* user, std::string& err) {
         } else if (pool != nullptr)
             pool(user, h_x_, h_ids_, n, ss.k,
                  h_ymiss_, l);
+        if (observe_cpu) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                Clock::now() - cpu_service_start).count();
+            const uint64_t work = (uint64_t) n * (uint64_t) ss.k;
+            if (elapsed > 0 && work > 0 && work <= UINT32_MAX)
+                aei_cpu_cost_->observe({aei::Device::cpu, (uint32_t) work,
+                                         (uint64_t) elapsed, 0, 0});
+        }
         if (remote_opt_) remote_opt_->end();
         progress_tick();
         std::atomic_thread_fence(std::memory_order_seq_cst);
