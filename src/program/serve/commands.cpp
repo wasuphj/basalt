@@ -150,10 +150,12 @@ Flow Runtime::dispatch() {
                         : "PROBE split: " + (ok0 ? e1 : e0);
                 } else {
                     aei_split_last_cpu_ns = aei_split_costs->reference_cost_ns((size_t)g.n_layers);
-                    std::printf("PROBE policy split updated cpu_ns=%llu dma_ns=%llu/%llu\n",
+                    std::printf("PROBE policy split updated cpu_ns=%llu dma_ns=%llu/%llu gpu_staged_ns=%llu/%llu\n",
                         (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
                         (unsigned long long)ver.aei_staged_dma_ns(),
-                        (unsigned long long)ver_b.aei_staged_dma_ns());
+                        (unsigned long long)ver_b.aei_staged_dma_ns(),
+                        (unsigned long long)ver.aei_staged_gpu_ns(),
+                        (unsigned long long)ver_b.aei_staged_gpu_ns());
                 }
             }
         } else if (line == "PROBE policy prefetch on") {
@@ -272,10 +274,12 @@ Flow Runtime::dispatch() {
             }
         } else if (line == "PROBE policy stats") {
             if (aei_split_costs) {
-                std::printf("PROBE policy split cpu_ns=%llu dma_ns=%llu/%llu\n",
+                std::printf("PROBE policy split cpu_ns=%llu dma_ns=%llu/%llu gpu_staged_ns=%llu/%llu\n",
                             (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
                             (unsigned long long)ver.aei_staged_dma_ns(),
-                            (unsigned long long)ver_b.aei_staged_dma_ns());
+                            (unsigned long long)ver_b.aei_staged_dma_ns(),
+                            (unsigned long long)ver.aei_staged_gpu_ns(),
+                            (unsigned long long)ver_b.aei_staged_gpu_ns());
             } else if (aei_prefetch) {
                 std::printf("PROBE policy prefetch metadata_bytes=%zu dropped_samples=%llu\n",
                             aei_prefetch->metadata_bytes(),
