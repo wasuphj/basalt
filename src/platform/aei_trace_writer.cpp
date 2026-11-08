@@ -25,16 +25,19 @@ bool AeiTraceWriter::start(const std::string& path,
     stop_.store(false, std::memory_order_relaxed);
     written_.store(0, std::memory_order_relaxed);
     io_errors_.store(0, std::memory_order_relaxed);
+    // Publish running before the worker is scheduled; otherwise a fast
+    // completion could flip running=false and then be overwritten by start().
+    active_.store(true, std::memory_order_release);
     try {
         worker_ = std::thread([this] { work(); });
     } catch (const std::exception&) {
+        active_.store(false, std::memory_order_release);
         error = "AEI trace worker could not start";
         std::fclose(file_);
         file_ = nullptr;
         source_ = nullptr;
         return false;
     }
-    active_.store(true, std::memory_order_relaxed);
     return true;
 }
 
