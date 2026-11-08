@@ -79,7 +79,33 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line == "PROBE policy split on") {
+        if (line == "PROBE policy auto on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, perr)) {
+                    aei_auto.enable();
+                    std::printf("PROBE policy auto on phase=explore arm=baseline\n");
+                }
+            }
+        } else if (line == "PROBE policy auto off") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, perr)) {
+                    aei_auto.disable();
+                    std::printf("PROBE policy auto off arm=baseline\n");
+                }
+            }
+        } else if (line == "PROBE policy auto stats") {
+            std::printf("PROBE policy auto enabled=%d phase=%u active=%s applied=%s completed=%u rejected=%u transitions=%u\n",
+                aei_auto.enabled() ? 1 : 0, (unsigned)aei_auto.phase(),
+                basalt::core::aei::auto_arm_name(aei_auto.active()),
+                basalt::core::aei::auto_arm_name(aei_auto_applied),
+                aei_auto.completed(), aei_auto.rejected(), aei_auto.transitions());
+        } else if (line == "PROBE policy split on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE split: inference in flight";
             else if (aei_rank_costs || aei_reuse_index || aei_prefetch) {
                 perr = "PROBE split: return to baseline before enabling a different policy";
@@ -97,6 +123,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy split refresh") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE split: inference in flight";
             else if (!aei_split_costs) perr = "PROBE split: not enabled";
             else {
@@ -121,6 +149,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy prefetch on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
             if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
             else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
@@ -145,6 +175,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy reuse on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
             if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
             else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
@@ -170,6 +202,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy cost on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
             if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
             else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
@@ -193,6 +227,8 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy baseline") {
+            if (aei_auto.enabled()) perr = "PROBE policy: use 'PROBE policy auto off' first";
+            else
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -482,6 +518,17 @@ Flow Runtime::dispatch() {
         ~BusyScope() { basalt::core::progress().busy.store(false); basalt::core::progress_at("idle"); }
     } busy_scope;
     const BusyClock busy(busy_s, busy_on, busy_from);
+    if (aei_auto.enabled() && aei_auto.active() != aei_auto_applied) {
+        std::string policy_error;
+        if (!aei_apply_auto_policy(aei_auto.active(), policy_error)) {
+            basalt::log::warn("basalt serve", "AEI auto policy transition refused: %s",
+                              policy_error.c_str());
+            aei_auto.failed_transition();
+            std::string ignored;
+            if (!aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, ignored))
+                basalt::log::warn("basalt serve", "AEI auto rollback: %s", ignored.c_str());
+        }
+    }
     Request request(*this);
     return request.execute();
 }
