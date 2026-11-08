@@ -41,5 +41,20 @@ int main() {
     CHECK(fsm.phase() == AutoPhase::exploit);
     CHECK(fsm.active() == AutoArm::baseline);
     CHECK(fsm.metadata_bytes() < 4096);
+
+    AutoPolicyController pp_guard;
+    pp_guard.enable(allowed);
+    for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
+        pp_guard.observe(128, 1280.0, true, 128, 1000.0);
+    for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
+        pp_guard.observe(128, 850.0, true, 128, 1250.0);
+    CHECK(pp_guard.prefill_samples(AutoArm::baseline, 1) == AutoPolicyController::kExploreSamples);
+    CHECK(pp_guard.active() == AutoArm::baseline);  // TP gain cannot hide PP regression
+    pp_guard.enable(allowed);
+    for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
+        pp_guard.observe(128, 1280.0, true, 128, 1000.0);
+    for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
+        pp_guard.observe(128, 850.0, true, 128, 990.0);
+    CHECK(pp_guard.active() == AutoArm::prefetch);
     std::puts("aei_auto_policy_test: OK");
 }

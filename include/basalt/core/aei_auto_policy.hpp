@@ -49,13 +49,17 @@ public:
     uint32_t samples(AutoArm arm, size_t bucket) const noexcept {
         return bucket < kBuckets ? sample_[static_cast<size_t>(arm)][bucket].count : 0;
     }
+    uint32_t prefill_samples(AutoArm arm, size_t bucket) const noexcept {
+        return bucket < kBuckets ? prefill_[static_cast<size_t>(arm)][bucket].count : 0;
+    }
     static size_t bucket(int64_t output_tokens) noexcept {
         return output_tokens < 64 ? 0 : output_tokens < 256 ? 1 : 2;
     }
 
     // A failed execution or an unusable measurement never improves an arm.
     // Only eligible, completed decode requests contribute to progression.
-    AutoArm observe(int64_t generated, double decode_ms, bool healthy) noexcept {
+    AutoArm observe(int64_t generated, double decode_ms, bool healthy,
+                    int64_t prompt_tokens = 0, double prompt_ms = 0.0) noexcept {
         if (!enabled()) return AutoArm::baseline;
         if (!healthy || !(decode_ms > 0.0) || !std::isfinite(decode_ms)) {
             rejected_++;
@@ -74,6 +78,15 @@ public:
         if (current.count < 65535) {
             ++current.count;
             current.mean += (cost - current.mean) / current.count;
+        }
+        if (prompt_tokens > 0 && prompt_tokens <= (1ll << 20) &&
+            prompt_ms > 0.0 && std::isfinite(prompt_ms)) {
+            auto& pp = prefill_[static_cast<size_t>(active_)][bucket(prompt_tokens)];
+            const double pp_cost = prompt_ms / static_cast<double>(prompt_tokens);
+            if (std::isfinite(pp_cost) && pp_cost > 0.0 && pp.count < 65535) {
+                ++pp.count;
+                pp.mean += (pp_cost - pp.mean) / pp.count;
+            }
         }
         ++completed_;
         if (phase_ == AutoPhase::cooldown) {
@@ -119,6 +132,7 @@ private:
         double mean = 0;
     };
     std::array<std::array<Sample, kBuckets>, kArms> sample_{};
+    std::array<std::array<Sample, kBuckets>, kArms> prefill_{};
     AutoArm active_ = AutoArm::baseline;
     AutoPhase phase_ = AutoPhase::disabled;
     uint32_t completed_ = 0;
@@ -134,6 +148,7 @@ private:
     }
     void reset_samples() noexcept {
         sample_ = {};
+        prefill_ = {};
         segment_samples_ = 0;
     }
     void clear() noexcept {
@@ -155,7 +170,27 @@ private:
                 if (base.count < kMinBucketSamples || candidate.count < kMinBucketSamples ||
                     !(base.mean > 0.0) || !(candidate.mean > 0.0)) continue;
                 const double gain = 1.0 - candidate.mean / base.mean;
-                if (gain >= best_gain) { best_gain = gain; best = static_cast<AutoArm>(a); }
+                if (gain < best_gain) continue;
+                // A policy improving TG but degrading prompt processing by
+                // more than 2% is never promoted. Match only prompt-size
+                // buckets having observations in both baseline and arm.
+                bool any_prefill = false, comparable = false, regressed = false;
+                for (size_t p = 0; p < kBuckets; ++p) {
+                    const auto& pp0 = prefill_[0][p];
+                    const auto& pp1 = prefill_[a][p];
+                    any_prefill |= pp0.count != 0 || pp1.count != 0;
+                    if (pp0.count < kMinBucketSamples ||
+                        pp1.count < kMinBucketSamples || !(pp0.mean > 0.0))
+                        continue;
+                    comparable = true;
+                    if (pp1.mean > pp0.mean * 1.02) {
+                        regressed = true;
+                        break;
+                    }
+                }
+                if (regressed || (any_prefill && !comparable)) continue;
+                best_gain = gain;
+                best = static_cast<AutoArm>(a);
             }
         }
         set_active(best);
