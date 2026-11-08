@@ -21,6 +21,7 @@
 // selection, native indexer) and a profile-filled VRAM expert tier with its residency table on the device.
 #pragma once
 #include "basalt/core/aei_router_capture.hpp"
+#include "basalt/core/aei_scheduler.hpp"
 
 #include <functional>
 #include <cstdio>
@@ -121,6 +122,10 @@ public:
     // decisions have a separately verified host-visible source.
     void set_aei_router_trace(aei::RouterEventBuffer* sink, uint64_t stream) noexcept {
         router_capture_.bind(sink, stream);
+    }
+    // Read-only timing observations; no scheduler policy is applied to execution.
+    void set_aei_cpu_cost_probe(aei::ShadowScheduler* observer) noexcept {
+        aei_cpu_cost_ = observer;
     }
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
@@ -404,6 +409,7 @@ private:
     struct WindowRecorder;
     RemoteExpertOpt* remote_opt_ = nullptr;
     aei::VerifierRouterCapture router_capture_{};
+    aei::ShadowScheduler* aei_cpu_cost_ = nullptr;
     bool main_high_ = false;
     PeerExperts* peer_ = nullptr;
     std::vector<PeerExperts*> xpeers_;
