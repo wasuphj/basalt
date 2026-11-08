@@ -163,9 +163,10 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     return true;
 }
 
-void Runtime::aei_record_auto_request(int64_t generated, double decode_ms, bool healthy) {
+void Runtime::aei_record_auto_request(int64_t generated, double decode_ms,
+                                      int64_t fresh_prompt, double prompt_ms, bool healthy) {
     if (!aei_auto.enabled()) return;
-    (void)aei_auto.observe(generated, decode_ms, healthy);
+    (void)aei_auto.observe(generated, decode_ms, healthy, fresh_prompt, prompt_ms);
 }
 
 int Runtime::run_requests() {
