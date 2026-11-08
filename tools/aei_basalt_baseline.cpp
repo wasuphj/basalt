@@ -49,18 +49,24 @@ bool line(std::istream& in,std::string& output,bool& eof) {
 }
 }
 int main(int argc,char**argv) {
-    if(argc!=8) {
-        std::cerr<<"usage: aei-basalt-baseline LAYERS EXPERTS_PER_LAYER SWAPS_PER_ROUND EVERY_WINDOWS DECAY initial_residents.csv router.csv\n";
+    if(argc!=9) {
+        std::cerr<<"usage: aei-basalt-baseline LAYERS EXPERTS_PER_LAYER SWAPS_PER_ROUND EVERY_WINDOWS DECAY PROMOTE_MARGIN initial_residents.csv router.csv\n";
         return 2;
     }
     uint64_t layers=0,experts=0,swaps=0,every=0;
     if(!number(argv[1],layers) || !number(argv[2],experts) ||
-       !number(argv[3],swaps) || !number(argv[4],every))return 2;
+       !number(argv[3],swaps) || !number(argv[4],every) ||
+       every>UINT32_MAX)return 2;
     try {
-        const float decay=std::stof(argv[5]);
-        BasaltAdaptiveBaseline sim(layers,experts,swaps,(uint32_t)every,decay);
-        std::ifstream initial(argv[6]);
-        std::ifstream trace(argv[7]);
+        const std::string decay_input=argv[5], margin_input=argv[6];
+        size_t consumed=0;
+        const float decay=std::stof(decay_input,&consumed);
+        if(consumed!=decay_input.size())return 2;
+        const float margin=std::stof(margin_input,&consumed);
+        if(consumed!=margin_input.size())return 2;
+        BasaltAdaptiveBaseline sim(layers,experts,swaps,(uint32_t)every,decay,margin);
+        std::ifstream initial(argv[7]);
+        std::ifstream trace(argv[8]);
         if(!initial || !trace){std::cerr<<"missing initial snapshot or route trace\n";return 2;}
         std::string row;
         bool eof=false;
