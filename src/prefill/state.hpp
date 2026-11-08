@@ -32,6 +32,9 @@ struct Prefill::Impl {
     uint32_t* hist = nullptr;                // routed-entry counts per (layer, expert); see route_hist_reset
     int64_t hist_n = 0, hist_tokens = 0;
     bool hist_on = false;
+    core::aei::RouterEventBuffer* aei_trace_sink = nullptr;
+    uint64_t aei_trace_stream = 0;
+    uint64_t aei_trace_sequence = 0;
     cudaStream_t cs = nullptr, copy = nullptr;
     Gemm gemm;
     std::vector<void*> owned;

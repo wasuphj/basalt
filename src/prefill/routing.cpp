@@ -6,6 +6,7 @@
 #include "basalt/prefill/moe_fused.hpp"
 #include "basalt/prefill/moe_fp4.hpp"
 #include "basalt/core/peer_experts.hpp"
+#include "basalt/core/aei_event_buffer.hpp"
 #include "basalt/prefill/kernels.hpp"
 #include "basalt/log.hpp"
 #include <algorithm>
@@ -55,6 +56,19 @@ bool Prefill::Run::Chunk::Experts::Group::group() {
     core::progress_at("reading the prompt (batched): waiting for the GPU (attention, router) at layer",
                       l, p0);
     cudaStreamSynchronize(m.cs);
+    // The routed Top-K IDs are already on the host for grouping.
+    // Capture before regrouping/sorting so their original token order
+    // is preserved, without a new device copy or filesystem call.
+    if (m.aei_trace_sink && l >= 0 && l <= UINT32_MAX) {
+        for (int64_t i = 0; i < T * K; ++i) {
+            if (m.aei_trace_sequence == UINT64_MAX) break;
+            const uint64_t seq = m.aei_trace_sequence++;
+            const int32_t e = ids_h[(size_t)i];
+            if (e >= 0 && e < m.g->n_expert)
+                (void)m.aei_trace_sink->try_record({
+                    (uint32_t)l, (uint32_t)e, seq, m.aei_trace_stream});
+        }
+    }
     core::progress_at("reading the prompt (batched): layer", l, p0);
     if (guess_for == l + 1) {   // the guessed rows per expert of the next layer
         m.guess_rows.assign((size_t) m.g->n_expert, 0);

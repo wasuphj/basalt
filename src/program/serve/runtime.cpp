@@ -23,6 +23,7 @@ int run(Context& context) {
 }
 
 void Runtime::stop_aei_trace() {
+    sp.set_aei_router_trace(nullptr);
     ver.set_aei_router_trace(nullptr, 0);
     ver_b.set_aei_router_trace(nullptr, 0);
     // A live writer owns the ring: always drain, flush and join first.
