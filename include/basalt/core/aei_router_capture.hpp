@@ -30,6 +30,13 @@ public:
         }
     }
 
+    // Preserve temporal gaps if a host-visible ring cannot be authenticated.
+    void skip(size_t count) noexcept {
+        if (!buffer_) return;
+        if (count > UINT64_MAX - sequence_) sequence_ = UINT64_MAX;
+        else sequence_ += (uint64_t)count;
+    }
+
     bool enabled() const noexcept { return buffer_ != nullptr; }
     uint64_t next_sequence() const noexcept { return sequence_; }
 

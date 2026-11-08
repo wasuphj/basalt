@@ -99,10 +99,13 @@ and persist events. An opt-in control is now provided through the
 engine's existing idle-only probe protocol. There is still no background
 persistence worker or production-enabled tracing flag.
 
-This seam does **not** capture the device-planned MoE ring: its host IDs
-cannot yet be certified as the complete original routing decisions.
-It also does not cover prompt prefill routing. Neither source should be
-filled in from frequency histograms. The sink must be bound only when
+The device-planned MoE path is now included: CUDA's
+`dm_route_kernel` publishes all Top-K IDs in `DmRing::ids`, followed
+by a system fence and host doorbell. The host checks the layer index,
+token count and `kDmCap` bound before reading. Invalid ring headers
+advance the sequence to mark missing observations rather than invent
+routing decisions. **Prompt prefill routing is still not covered.**
+Never reconstruct sequences from frequency histograms. The sink must be bound only when
 the verifier is idle; the request stream ID must not be reused across
 different requests, and each verifier's stream must remain unique.
 
@@ -123,8 +126,8 @@ The ring has no disk I/O on the decode path; drain is a separate
 idle command. A 4096-entry buffer can overflow quickly when a model
 selects many experts per token. Gaps are visible through the event
 sequence or drop counters. No synthetic replacement events should be
-used in prediction accuracy calculations. This currently covers
-host-visible non-device-planned verify windows only. The default
+used in prediction accuracy calculations. This currently covers both the host-visible and device-planned
+verify windows (not prompt prefill). The default
 execution path does not allocate the buffer or activate the hook.
 
 ## From live diagnostics to the shadow evaluator

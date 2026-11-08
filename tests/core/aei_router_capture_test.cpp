@@ -18,6 +18,11 @@ int main() {
     CHECK(out[1].expert == 2 && out[1].sequence == 2);
     CHECK(out[2].expert == 1 && out[2].sequence == 4);
     CHECK(out[3].expert == 0 && out[3].sequence == 5);
+    capture.skip(5); // corrupted/missing device-planned ring
+    capture.capture(2, ids, 1, 3, 8);
+    CHECK(buffer.drain(out.data(), out.size()) == 2);
+    CHECK(out[0].sequence == 11);
+    CHECK(out[1].sequence == 13);
     capture.bind(nullptr, 45);
     capture.capture(0, ids, 2, 3, 8);
     CHECK(capture.next_sequence() == 0);
