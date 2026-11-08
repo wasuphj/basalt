@@ -96,11 +96,13 @@ Flow Runtime::dispatch() {
                 }
             }
         } else if (line == "PROBE policy auto stats") {
-            std::printf("PROBE policy auto enabled=%d phase=%u active=%s applied=%s completed=%u rejected=%u transitions=%u\n",
+            std::printf("PROBE policy auto enabled=%d phase=%u active=%s selected=%s applied=%s completed=%u rejected=%u transitions=%u audits=%u\n",
                 aei_auto.enabled() ? 1 : 0, (unsigned)aei_auto.phase(),
                 basalt::core::aei::auto_arm_name(aei_auto.active()),
+                basalt::core::aei::auto_arm_name(aei_auto.selected()),
                 basalt::core::aei::auto_arm_name(aei_auto_applied),
-                aei_auto.completed(), aei_auto.rejected(), aei_auto.transitions());
+                aei_auto.completed(), aei_auto.rejected(), aei_auto.transitions(),
+                aei_auto.audits());
         } else if (line == "PROBE policy split on") {
             if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
             else

@@ -10,7 +10,7 @@
 namespace basalt::core::aei {
 
 enum class AutoArm : uint8_t { baseline, cost, reuse, prefetch, split, count };
-enum class AutoPhase : uint8_t { disabled, explore, exploit, cooldown };
+enum class AutoPhase : uint8_t { disabled, explore, exploit, audit, cooldown };
 inline constexpr const char* auto_arm_name(AutoArm arm) noexcept {
     switch (arm) {
         case AutoArm::baseline: return "baseline";
@@ -27,6 +27,9 @@ public:
     static constexpr uint32_t kExploreSamples = 12;
     static constexpr uint32_t kMinBucketSamples = 4;
     static constexpr uint32_t kReevaluateAfter = 96;
+    static constexpr uint32_t kAuditEvery = 32;
+    static constexpr uint32_t kAuditSamples = 8;
+    static constexpr double kAuditMinRelativeGain = 0.05;
     static constexpr double kMinRelativeGain = 0.08;
     static constexpr size_t kArms = static_cast<size_t>(AutoArm::count);
     static constexpr size_t kBuckets = 3;
@@ -42,6 +45,8 @@ public:
     bool enabled() const noexcept { return phase_ != AutoPhase::disabled; }
     AutoPhase phase() const noexcept { return phase_; }
     AutoArm active() const noexcept { return active_; }
+    AutoArm selected() const noexcept { return winner_; }
+    uint32_t audits() const noexcept { return audits_; }
     uint32_t completed() const noexcept { return completed_; }
     uint32_t rejected() const noexcept { return rejected_; }
     uint32_t transitions() const noexcept { return transitions_; }
@@ -65,8 +70,8 @@ public:
             rejected_++;
             phase_ = AutoPhase::cooldown;
             cooldown_left_ = 8;
-            active_ = AutoArm::baseline;
-            transitions_++;
+            winner_ = AutoArm::baseline;
+            set_active(AutoArm::baseline);
             return active_;
         }
         if (generated < 32 || generated > (1ll << 20)) return active_;
@@ -89,6 +94,30 @@ public:
             }
         }
         ++completed_;
+        if (phase_ == AutoPhase::audit) {
+            add(audit_decode_[b], cost);
+            if (prompt_tokens > 0 && prompt_tokens <= (1ll << 20) &&
+                prompt_ms > 0.0 && std::isfinite(prompt_ms))
+                add(audit_prefill_[bucket(prompt_tokens)],
+                    prompt_ms / static_cast<double>(prompt_tokens));
+            if (++audit_samples_ >= kAuditSamples) {
+                ++audits_;
+                if (audit_benefit_survives()) {
+                    phase_ = AutoPhase::exploit;
+                    set_active(winner_);
+                } else {
+                    winner_ = AutoArm::baseline;
+                    phase_ = AutoPhase::cooldown;
+                    cooldown_left_ = 8;
+                    set_active(AutoArm::baseline);
+                }
+                audit_samples_ = 0;
+                since_audit_ = 0;
+                audit_decode_ = {};
+                audit_prefill_ = {};
+            }
+            return active_;
+        }
         if (phase_ == AutoPhase::cooldown) {
             if (cooldown_left_ && --cooldown_left_ == 0) {
                 reset_samples();
@@ -113,7 +142,15 @@ public:
             if (++exploit_samples_ >= kReevaluateAfter) {
                 reset_samples();
                 phase_ = AutoPhase::explore;
-                exploit_samples_ = 0;
+                winner_ = AutoArm::baseline;
+                exploit_samples_ = since_audit_ = 0;
+                set_active(AutoArm::baseline);
+            } else if (winner_ != AutoArm::baseline &&
+                       ++since_audit_ >= kAuditEvery) {
+                phase_ = AutoPhase::audit;
+                audit_samples_ = 0;
+                audit_decode_ = {};
+                audit_prefill_ = {};
                 set_active(AutoArm::baseline);
             }
         }
@@ -124,6 +161,7 @@ public:
         ++rejected_;
         phase_ = AutoPhase::cooldown;
         cooldown_left_ = 8;
+        winner_ = AutoArm::baseline;
         set_active(AutoArm::baseline);
     }
 private:
@@ -134,15 +172,55 @@ private:
     std::array<std::array<Sample, kBuckets>, kArms> sample_{};
     std::array<std::array<Sample, kBuckets>, kArms> prefill_{};
     AutoArm active_ = AutoArm::baseline;
+    AutoArm winner_ = AutoArm::baseline;
     AutoPhase phase_ = AutoPhase::disabled;
     uint32_t completed_ = 0;
     uint32_t rejected_ = 0;
     uint32_t transitions_ = 0;
     uint32_t segment_samples_ = 0;
     uint32_t exploit_samples_ = 0;
+    uint32_t since_audit_ = 0;
+    uint32_t audit_samples_ = 0;
+    uint32_t audits_ = 0;
+    std::array<Sample, kBuckets> audit_decode_{};
+    std::array<Sample, kBuckets> audit_prefill_{};
     uint32_t cooldown_left_ = 0;
     uint32_t supported_ = (1u << kArms) - 1;
 
+    static void add(Sample& sample, double value) noexcept {
+        if (!(value > 0.0) || !std::isfinite(value) || sample.count >= 65535) return;
+        ++sample.count;
+        sample.mean += (value - sample.mean) / sample.count;
+    }
+    bool audit_benefit_survives() const noexcept {
+        if (winner_ == AutoArm::baseline) return false;
+        const size_t arm = static_cast<size_t>(winner_);
+        bool improved = false;
+        for (size_t b = 0; b < kBuckets; ++b) {
+            const auto& base = audit_decode_[b];
+            const auto& candidate = sample_[arm][b];
+            if (base.count < kMinBucketSamples ||
+                candidate.count < kMinBucketSamples || !(base.mean > 0.0))
+                continue;
+            if (candidate.mean <= base.mean * (1.0 - kAuditMinRelativeGain))
+                improved = true;
+        }
+        if (!improved) return false;
+        // Block restoration if either measured Prefill latency regresses
+        // or there is too little comparable current Prefill traffic.
+        bool some_pp = false, compared = false;
+        for (size_t b = 0; b < kBuckets; ++b) {
+            const auto& base = audit_prefill_[b];
+            const auto& candidate = prefill_[arm][b];
+            some_pp |= base.count != 0 || candidate.count != 0;
+            if (base.count < kMinBucketSamples ||
+                candidate.count < kMinBucketSamples || !(base.mean > 0.0))
+                continue;
+            compared = true;
+            if (candidate.mean > base.mean * 1.02) return false;
+        }
+        return !some_pp || compared;
+    }
     void set_active(AutoArm policy) noexcept {
         if (active_ != policy) { active_ = policy; ++transitions_; }
     }
@@ -155,7 +233,11 @@ private:
         reset_samples();
         active_ = AutoArm::baseline;
         phase_ = AutoPhase::disabled;
+        winner_ = AutoArm::baseline;
+        audit_decode_ = {};
+        audit_prefill_ = {};
         completed_ = rejected_ = transitions_ = exploit_samples_ = cooldown_left_ = 0;
+        since_audit_ = audit_samples_ = audits_ = 0;
     }
     void choose_best() noexcept {
         AutoArm best = AutoArm::baseline;
@@ -193,6 +275,7 @@ private:
                 best = static_cast<AutoArm>(a);
             }
         }
+        winner_ = best;
         set_active(best);
     }
 };

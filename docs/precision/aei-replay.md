@@ -431,8 +431,15 @@ prompt token in independent prompt-length buckets. If any comparable
 bucket regresses more than 2% versus baseline, the candidate is
 rejected; if one policy has prompt measurements but there is no
 comparable bucket, promotion is withheld. Otherwise the original
-policy wins. After 96 exploitation
-samples, it restarts exploration to adapt to changing traffic.
+policy wins. During exploitation it also revisits baseline after each 32 eligible
+requests, sampling 8 baseline requests in a dedicated `audit` state.
+It restores the winner only when fresh baseline samples show at least
+a 5% decode latency-per-token advantage for the candidate in a
+comparable output-size bucket without a greater than 2% PP regression.
+Otherwise it enters an eight-request baseline cooldown and retries
+exploration. After 96 exploitation samples, the controller starts a
+fresh full exploration round to accommodate longer-term traffic
+changes.
 Execution failure or nonfinite latency enters an eight-request
 baseline cooldown before another exploration cycle. These boundaries
 are initial product heuristics, not guarantees of statistical
