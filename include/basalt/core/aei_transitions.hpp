@@ -41,7 +41,10 @@ public:
         size_t victim = 0;
         for (size_t i = 1; i < kTop; ++i)
             if (row.edges[i].count < row.edges[victim].count) victim = i;
-        row.edges[victim] = {to, static_cast<uint16_t>(row.edges[victim].count + 1)};
+        if (row.edges[victim].count == std::numeric_limits<uint16_t>::max()) {
+            for (auto& edge : row.edges) edge.count = static_cast<uint16_t>((edge.count + 1u) / 2u);
+        }
+        row.edges[victim] = {to, static_cast<uint16_t>(row.edges[victim].count + 1u)};
     }
 
     std::array<Prediction, kTop> predict(uint32_t from) const noexcept {
