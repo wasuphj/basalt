@@ -22,6 +22,7 @@
 #pragma once
 #include "basalt/core/aei_router_capture.hpp"
 #include "basalt/core/aei_scheduler.hpp"
+#include "basalt/core/aei_cost_rank.hpp"
 
 #include <functional>
 #include <cstdio>
@@ -126,6 +127,9 @@ public:
     // Read-only timing observations; no scheduler policy is applied to execution.
     void set_aei_cpu_cost_probe(aei::ShadowScheduler* observer) noexcept {
         aei_cpu_cost_ = observer;
+    }
+    void set_aei_cost_placement_probe(aei::LayerCostRank* observer) noexcept {
+        aei_layer_cost_ = observer;
     }
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
@@ -410,6 +414,7 @@ private:
     RemoteExpertOpt* remote_opt_ = nullptr;
     aei::VerifierRouterCapture router_capture_{};
     aei::ShadowScheduler* aei_cpu_cost_ = nullptr;
+    aei::LayerCostRank* aei_layer_cost_ = nullptr;
     bool main_high_ = false;
     PeerExperts* peer_ = nullptr;
     std::vector<PeerExperts*> xpeers_;
