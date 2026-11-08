@@ -35,6 +35,7 @@ def verify(csv_path: Path, log_path: Path) -> dict:
         raise InvalidTrace("producer reports missing events or an I/O failure")
     if written <= 0:
         raise InvalidTrace("trace contains no recorded expert events")
+    original_stat = csv_path.stat()
     seen = {}
     digest = hashlib.sha256()
     count = 0
@@ -65,6 +66,10 @@ def verify(csv_path: Path, log_path: Path) -> dict:
                 count += 1
     except (UnicodeError, csv.Error) as ex:
         raise InvalidTrace(f"malformed CSV: {ex}") from ex
+    checked_stat = csv_path.stat()
+    if (original_stat.st_size != checked_stat.st_size or
+            original_stat.st_mtime_ns != checked_stat.st_mtime_ns):
+        raise InvalidTrace("CSV changed during verification")
     if written != count:
         raise InvalidTrace(f"row count mismatch: receipt={written}, file={count}")
     return {"verdict": "pass", "records": count, "streams": len(seen),
