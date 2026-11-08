@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
 namespace basalt::core::aei {
 
@@ -52,6 +54,66 @@ public:
             : phase < 2.0 ? 1.4 - 0.4 * (phase - 1.0)
             : std::max(0.5, 1.0 - 0.15 * (phase - 2.0));
         return static_cast<float>(weight);
+    }
+
+    // Only interval estimates are durable. Old recency timestamps
+    // would be meaningless on a fresh request clock and are not saved.
+    std::string checkpoint() const {
+        std::string result = "AER1";
+        auto append = [&](uint64_t value, int bytes) {
+            for (int i=0;i<bytes;++i)
+                result.push_back(static_cast<char>(value >> (i*8)));
+        };
+        append(size_, 4);
+        const size_t count_at=result.size();
+        append(0,4);
+        uint32_t records=0;
+        for (size_t i=0;i<size_;++i) {
+            const uint64_t interval = cells_[i].interval.load(std::memory_order_relaxed);
+            if (!interval) continue;
+            append(i,4);
+            append(interval,8);
+            ++records;
+        }
+        for (int i=0; i<4; ++i)
+            result[count_at+(size_t)i]=static_cast<char>(records >> (i*8));
+        return result;
+    }
+    bool restore_checkpoint(std::string_view data) noexcept {
+        if (data.size() < 12 || data.substr(0,4) != "AER1") return false;
+        size_t pos=4;
+        auto read = [&](int bytes) {
+            uint64_t value=0;
+            for (int i=0;i<bytes;++i)
+                value |= uint64_t(static_cast<uint8_t>(data[pos++])) << (8*i);
+            return value;
+        };
+        const uint64_t size=read(4), count=read(4);
+        if (size != size_ || count > size_ ||
+            data.size() != 12+count*12) return false;
+        size_t cursor=12;
+        uint64_t prev=0;
+        for (uint64_t j=0; j<count; ++j) {
+            pos=cursor;
+            const uint64_t index=read(4), interval=read(8);
+            if (index >= size_ || !interval ||
+                (j && index <= prev)) return false;
+            prev=index;
+            cursor=pos;
+        }
+        // Commit only after all records were validated.
+        for (size_t i=0;i<size_;++i) {
+            cells_[i].last.store(0, std::memory_order_relaxed);
+            cells_[i].interval.store(0, std::memory_order_relaxed);
+        }
+        clock_.store(0, std::memory_order_relaxed);
+        pos=12;
+        for (uint64_t j=0;j<count;++j) {
+            const auto index=static_cast<size_t>(read(4));
+            const uint64_t interval=read(8);
+            cells_[index].interval.store(interval, std::memory_order_relaxed);
+        }
+        return true;
     }
 
     size_t metadata_bytes() const noexcept { return sizeof(*this) + size_ * sizeof(Cell); }
