@@ -179,6 +179,7 @@ Flow Runtime::dispatch() {
                     ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
                     ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
                     sp.set_aei_predictive_prefetch(aei_prefetch.get());
+                    if (!aei_hint_worker) aei_start_prefetch_io();
                     std::printf("PROBE policy prefetch on metadata_bytes=%zu\n",
                                 aei_prefetch->metadata_bytes());
                 }
@@ -198,6 +199,7 @@ Flow Runtime::dispatch() {
                     ver.set_aei_predictive_prefetch(nullptr, 0);
                     ver_b.set_aei_predictive_prefetch(nullptr, 0);
                     sp.set_aei_predictive_prefetch(nullptr);
+                    aei_stop_prefetch_io();
                     aei_prefetch.reset();
                     // Policy choices are mutually exclusive; keep an unambiguous A/B.
                     ver.set_aei_cost_placement_probe(nullptr);
@@ -228,6 +230,7 @@ Flow Runtime::dispatch() {
                     ver.set_aei_predictive_prefetch(nullptr, 0);
                     ver_b.set_aei_predictive_prefetch(nullptr, 0);
                     sp.set_aei_predictive_prefetch(nullptr);
+                    aei_stop_prefetch_io();
                     aei_prefetch.reset();
                     if (!aei_rank_costs)
                         aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
@@ -252,6 +255,7 @@ Flow Runtime::dispatch() {
                 ver.set_aei_predictive_prefetch(nullptr, 0);
                 ver_b.set_aei_predictive_prefetch(nullptr, 0);
                 sp.set_aei_predictive_prefetch(nullptr);
+                aei_stop_prefetch_io();
                 aei_prefetch.reset();
                 if (aei_split_costs) {
                     std::string ignored;
