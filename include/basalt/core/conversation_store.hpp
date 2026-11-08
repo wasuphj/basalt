@@ -75,6 +75,8 @@ public:
     /// Queues `image` for writing; the writer thread owns it from here.  Files it supersedes (the same conversation
     /// a turn back) are dropped.  False when the queue is over its byte cap (nothing queued).
     bool put(SavedConversation&& image, uint64_t queue_cap);
+    /// Writes one already-owned image synchronously. On failure the caller retains its image.
+    bool put_sync(SavedConversation& image);
 
     /// Whether an image with these live tokens is stored or queued.
     bool holds(const std::vector<int32_t>& ids, const std::vector<ConversationImageKey>& images, bool cvec) const;
@@ -88,6 +90,7 @@ public:
 private:
     struct Entry;
     struct Job;
+    std::shared_ptr<Job> enqueue(SavedConversation&& image, uint64_t queue_cap);
     struct PartFile {                        ///< a block or state file: its size and the conversations that use it
         uint64_t bytes = 0;
         int refs = 0;
@@ -112,6 +115,7 @@ private:
     bool stop_ = false, busy_ = false;
     Stats stats_;
     std::vector<std::unique_ptr<ConversationStoreBuffer>> read_bufs_;   ///< the loads' aligned read buffers, kept
+    std::unique_ptr<ConversationStoreBuffer> write_buf_;
     std::thread thread_;
     int64_t row_cells_ = 1;
 };
