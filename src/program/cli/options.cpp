@@ -28,7 +28,10 @@ std::optional<int> resolve_model_options(Options& o, bool multi_gpu) {
     // Speculation needs the pack's drafter; prompt chunks are sized from what the expert cache can lend; the experts
     // the GPU does not hold go to page-locked RAM when they fit (a plain file mapping when not); the adaptive tier
     // of a server on one card runs a round every window.  An explicit flag always wins.
-    if (!o.spec_given && !o.mtp.empty()) o.spec = 8;
+    if (!o.spec_given && !o.mtp.empty()) o.spec = o.serve && !multi_gpu ? 5 : 8;
+    if (o.serve && !o.conversation_cache_min_tokens_given && o.conversation_cache_disk_mib > 0 && o.conversation_cache_min_tokens <= 0) {
+        o.conversation_cache_min_tokens = 8192;
+    }
     if (!o.prefill_given) {
         o.prefill_auto = o.prefill_auto_fit = true;
         o.prefill_auto_max = 32768;

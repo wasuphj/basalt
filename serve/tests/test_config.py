@@ -468,6 +468,33 @@ class Startup(unittest.TestCase):
         code, err = self.run_server({"server": {"port": "abc"}})
         self.assertEqual(code, 2)
 
+    def test_conversation_cache_min_tokens_and_spec_flags(self):
+        ap = build_parser()
+        cfg = {
+            "server": {"mock-engine": True},
+            "engine": {
+                "spec": 5,
+                "suffix-draft": 3,
+                "conversation-cache-min-tokens": 8192,
+                "conversation-cache-disk-mib": 65536,
+            }
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(cfg, f)
+            p = f.name
+        try:
+            a, used, file_words, cli_words = parse_settings(ap, ["--config", p])
+            self.assertIn("--spec", file_words)
+            self.assertEqual(file_words[file_words.index("--spec") + 1], "5")
+            self.assertIn("--suffix-draft", file_words)
+            self.assertEqual(file_words[file_words.index("--suffix-draft") + 1], "3")
+            self.assertIn("--conversation-cache-min-tokens", file_words)
+            self.assertEqual(file_words[file_words.index("--conversation-cache-min-tokens") + 1], "8192")
+            self.assertIn("--conversation-cache-disk-mib", file_words)
+            self.assertEqual(file_words[file_words.index("--conversation-cache-disk-mib") + 1], "65536")
+        finally:
+            os.unlink(p)
+
 
 if __name__ == "__main__":
     unittest.main()
