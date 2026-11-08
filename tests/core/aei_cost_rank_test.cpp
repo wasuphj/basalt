@@ -1,5 +1,6 @@
 #include "basalt/core/aei_cost_rank.hpp"
 #include <cstdio>
+#include <string>
 #include <thread>
 #include <array>
 using namespace basalt::core::aei;
@@ -28,5 +29,11 @@ int main() {
     CHECK(model.samples(0) == 4008);
     CHECK(model.multiplier(0, reference) >= 0.5f);
     CHECK(model.multiplier(0, reference) <= 2.0f);
+    const std::string checkpoint = model.checkpoint();
+    LayerCostRank resumed;
+    CHECK(resumed.restore_checkpoint(checkpoint));
+    CHECK(resumed.samples(0) == model.samples(0));
+    CHECK(resumed.reference_cost_ns(4) != 0);
+    CHECK(!resumed.restore_checkpoint(checkpoint.substr(1)));
     std::puts("aei_cost_rank_test: OK");
 }

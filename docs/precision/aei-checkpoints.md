@@ -7,9 +7,9 @@ basalt --serve --aei-auto --aei-state /path/to/aei-policy.state
 ```
 
 The policy FSM stores sampled per-arm TG and PP statistics and
-counters. When a Prefetch observer has learned actual Expert
-transitions, the same checkpoint also stores its bounded sparse
-transition table in portable binary format. It never stores
+counters. The same checkpoint saves bounded sparse Expert transitions,
+per-Expert reuse intervals (only entries with observations), and
+per-layer CPU miss cost estimates for each distinct policy arm. It never stores
 in-flight operations, device pointers, Expert residency, CUDA graphs,
 the currently applied arm, or permissions to perform actions. On
 restart the engine starts in Baseline exploration with those historical
@@ -22,8 +22,8 @@ configuration). These attributes are hashed into the environment
 identity, separate from the payload checksum. A missing, damaged or
 incompatible checkpoint is ignored, not partially loaded.
 
-Storage uses bounded length-prefixed policy text and optional sparse
-transition bytes with SHA-256, written to a sibling
+Storage uses bounded length-prefixed policy text and optional
+portable binary observer states with SHA-256, written to a sibling
 temporary file and atomically renamed. The engine updates it at
 64 completed eligible requests and during normal shutdown. It does
 not claim atomic durability on sudden power loss or protection from
@@ -31,7 +31,8 @@ malicious actors who can rewrite both the file and its checksum.
 
 The switch is opt-in; ordinary Basalt startup uses no persistent
 AEI state. To start fresh, omit `--aei-state` or select a new path.
-This checkpoint persists policy-selection evidence and the sparse
-next-Expert transition table (maximum 4096 hashed sources). It does
-not persist large per-Expert reuse intervals, calibrated CPU/GPU cost
-observations, in-flight predictions, or actual VRAM cache residency.
+This checkpoint preserves the sparse next-Expert table (4096 hashed
+sources), observed Expert reuse intervals, and CPU miss service cost
+estimates. Absolute recency timestamps, in-flight predictions,
+GPU DMA calibration, CUDA graph state, and actual VRAM residency are
+not restored. Serialized state is bounded to 16 MiB.

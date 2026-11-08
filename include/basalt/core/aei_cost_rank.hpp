@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <string_view>
 
 namespace basalt::core::aei {
 
@@ -60,6 +62,43 @@ public:
     uint32_t samples(uint32_t layer) const noexcept {
         return layer < kMaxLayers ? cells_[layer].samples.load(std::memory_order_relaxed) : 0;
     }
+    std::string checkpoint() const {
+        std::string output = "AEC1";
+        output.reserve(4 + kMaxLayers * 12);
+        auto push = [&](uint64_t value, int bytes) {
+            for (int i=0; i<bytes; ++i)
+                output.push_back(static_cast<char>(value >> (i*8)));
+        };
+        for (const auto& cell : cells_) {
+            push(cell.ns_per_miss.load(std::memory_order_relaxed), 8);
+            push(cell.samples.load(std::memory_order_relaxed), 4);
+        }
+        return output;
+    }
+    bool restore_checkpoint(std::string_view data) noexcept {
+        if (data.size() != 4 + kMaxLayers * 12 || data.substr(0,4) != "AEC1")
+            return false;
+        std::array<uint64_t,kMaxLayers> costs{};
+        std::array<uint32_t,kMaxLayers> counts{};
+        size_t pos=4;
+        auto read = [&](int bytes) {
+            uint64_t value=0;
+            for (int j=0; j<bytes; ++j)
+                value |= uint64_t(static_cast<uint8_t>(data[pos++])) << (j*8);
+            return value;
+        };
+        for (size_t i=0; i<kMaxLayers; ++i) {
+            costs[i]=read(8);
+            counts[i]=static_cast<uint32_t>(read(4));
+            if ((costs[i]==0) != (counts[i]==0)) return false;
+        }
+        for (size_t i=0; i<kMaxLayers; ++i) {
+            cells_[i].ns_per_miss.store(costs[i], std::memory_order_relaxed);
+            cells_[i].samples.store(counts[i], std::memory_order_relaxed);
+        }
+        return true;
+    }
+
     size_t metadata_bytes() const noexcept { return sizeof(*this); }
 
 private:

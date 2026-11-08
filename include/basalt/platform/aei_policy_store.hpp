@@ -19,7 +19,7 @@ inline bool aei_save_policy_checkpoint(const std::string& path,
                                        const std::string& environment,
                                        const std::string& payload) {
     if (path.empty() || environment.empty() || payload.empty() ||
-        environment.size() > 8192 || payload.size() > 256u * 1024u) return false;
+        environment.size() > 8192 || payload.size() > 16u * 1024u * 1024u) return false;
     const std::string output = "AEI-POLICY-STORE-1\n" +
         aei_sha256_hex(environment) + "\n" +
         aei_sha256_hex(payload) + "\n" + payload;
@@ -43,7 +43,7 @@ inline bool aei_load_policy_checkpoint(const std::string& path,
         return false;
     std::FILE* file = open_file_utf8(path, "rb");
     if (!file) return false;
-    std::vector<char> bytes(256u * 1024u + 256u);
+    std::vector<char> bytes(16u * 1024u * 1024u + 256u);
     const size_t count = std::fread(bytes.data(), 1, bytes.size(), file);
     const bool readable = !std::ferror(file) && std::feof(file);
     const bool closed = std::fclose(file) == 0;
@@ -58,7 +58,7 @@ inline bool aei_load_policy_checkpoint(const std::string& path,
     if (b == std::string::npos || c == std::string::npos) return false;
     if (contents.substr(a+1,b-a-1) != aei_sha256_hex(environment)) return false;
     const std::string candidate = contents.substr(c+1);
-    if (candidate.empty() || candidate.size() > 256u * 1024u ||
+    if (candidate.empty() || candidate.size() > 16u * 1024u * 1024u ||
         contents.substr(b+1,c-b-1) != aei_sha256_hex(candidate)) return false;
     payload = candidate;
     return true;

@@ -79,9 +79,16 @@ bool Runtime::aei_save_checkpoint() {
     if (id.empty()) return false;
     const std::string policy = aei_auto.checkpoint();
     const std::string learned = aei_prefetch ? aei_prefetch->checkpoint() : std::string{};
-    const std::string bundle = "AEI-BUNDLE-2\n" +
-        std::to_string(policy.size()) + "\n" +
-        std::to_string(learned.size()) + "\n" + policy + learned;
+    const std::array<std::string,5> parts{
+        policy, learned,
+        aei_reuse_index ? aei_reuse_index->checkpoint() : std::string{},
+        aei_rank_costs ? aei_rank_costs->checkpoint() : std::string{},
+        aei_split_costs ? aei_split_costs->checkpoint() : std::string{}
+    };
+    std::string bundle = "AEI-BUNDLE-3\n";
+    for (const auto& part : parts)
+        bundle += std::to_string(part.size()) + "\n";
+    for (const auto& part : parts) bundle += part;
     if (!basalt::platform::aei_save_policy_checkpoint(
             o.aei_state_path, id, bundle)) return false;
     aei_checkpoint_saved_at = aei_auto.completed();
@@ -126,6 +133,79 @@ bool Runtime::aei_enable_automatic(std::string& err) {
                 o.aei_state_path, identity, payload)) {
             // Bundles are length-prefixed: the sparse table is binary and
             // must never be parsed as a newline-delimited text file.
+            constexpr std::string_view v3 = "AEI-BUNDLE-3\n";
+            if (payload.compare(0,v3.size(),v3)==0) {
+                std::array<size_t,5> sizes{};
+                std::array<std::string_view,5> pieces{};
+                size_t pos=v3.size();
+                bool valid=true;
+                auto decimal = [](std::string_view value, size_t& output) {
+                    const auto result = std::from_chars(
+                        value.data(), value.data() + value.size(), output);
+                    return result.ec == std::errc{} &&
+                           result.ptr == value.data() + value.size();
+                };
+                for (auto& size : sizes) {
+                    const auto end=payload.find('\n',pos);
+                    if (end==std::string::npos ||
+                        !decimal(std::string_view(payload).substr(pos,end-pos),size)) {
+                        valid=false;
+                        break;
+                    }
+                    pos=end+1;
+                }
+                const std::array<size_t,5> limits{
+                    4096, 256u*1024u, 12u*1024u*1024u+12, 4096, 4096
+                };
+                if (valid) {
+                    size_t needed=0;
+                    for (size_t i=0;i<sizes.size();++i) {
+                        if (sizes[i]>limits[i]) {valid=false;break;}
+                        needed+=sizes[i];
+                    }
+                    valid=valid && needed==payload.size()-pos;
+                }
+                if (valid) {
+                    for (size_t i=0;i<sizes.size();++i) {
+                        pieces[i]=std::string_view(payload.data()+pos,sizes[i]);
+                        pos+=sizes[i];
+                    }
+                    resumed=aei_auto.restore_checkpoint(pieces[0],supported);
+                    if (resumed && !pieces[1].empty()) {
+                        resumed=(supported & (1u << (unsigned)AutoArm::prefetch)) && total>0 &&
+                                total<=basalt::core::aei::NextExpertPrefetch::kMaxExperts;
+                        if (resumed) {
+                            aei_prefetch=std::make_unique<
+                                basalt::core::aei::NextExpertPrefetch>((size_t)total);
+                            resumed=aei_prefetch->restore_checkpoint(pieces[1]);
+                        }
+                    }
+                    if (resumed && !pieces[2].empty()) {
+                        resumed=(supported & (1u << (unsigned)AutoArm::reuse)) && total>0 &&
+                                total<=basalt::core::aei::ExpertReuseIndex::kMaximumExperts;
+                        if (resumed) {
+                            aei_reuse_index=std::make_unique<
+                                basalt::core::aei::ExpertReuseIndex>((size_t)total);
+                            resumed=aei_reuse_index->restore_checkpoint(pieces[2]);
+                        }
+                    }
+                    if (resumed && !pieces[3].empty()) {
+                        aei_rank_costs=std::make_unique<basalt::core::aei::LayerCostRank>();
+                        resumed=aei_rank_costs->restore_checkpoint(pieces[3]);
+                    }
+                    if (resumed && !pieces[4].empty()) {
+                        aei_split_costs=std::make_unique<basalt::core::aei::LayerCostRank>();
+                        resumed=aei_split_costs->restore_checkpoint(pieces[4]);
+                    }
+                    if (!resumed) {
+                        aei_prefetch.reset();
+                        aei_reuse_index.reset();
+                        aei_rank_costs.reset();
+                        aei_split_costs.reset();
+                        aei_auto.enable(supported);
+                    }
+                }
+            } else {
             constexpr std::string_view prefix = "AEI-BUNDLE-2\n";
             if (payload.compare(0, prefix.size(), prefix) == 0) {
                 const auto p1 = payload.find('\n', prefix.size());
@@ -167,10 +247,10 @@ bool Runtime::aei_enable_automatic(std::string& err) {
                     }
                 }
             } else {
-                // Forward-compatible read of the earlier statistics-only
-                // file written before the sparse transition bundle existed.
+                // Earlier statistics-only state.
                 resumed = aei_auto.restore_checkpoint(payload, supported);
             }
+            } // End legacy v2/raw checkpoint format.
         }
         if (resumed) {
             aei_checkpoint_saved_at = aei_auto.completed();
