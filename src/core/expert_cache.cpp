@@ -132,7 +132,12 @@ bool write_expert_profile(const std::string& path, int64_t n_layers, int64_t n_e
         err = "write_expert_profile: the model's layout does not fit the format";
         return false;
     }
-    std::vector<int32_t> table((size_t) (n_layers * n_expert), -1);
+    const size_t total = (size_t) n_layers * (size_t) n_expert;
+    if (ranked.size() > total) {
+        err = "write_expert_profile: too many ranked pairs";
+        return false;
+    }
+    std::vector<int32_t> table(total, -1);
     std::vector<uint16_t> pairs;
     pairs.reserve(ranked.size() * 2);
     for (size_t r = 0; r < ranked.size(); ++r) {
@@ -141,7 +146,12 @@ bool write_expert_profile(const std::string& path, int64_t n_layers, int64_t n_e
             err = "write_expert_profile: a ranked pair is out of range";
             return false;
         }
-        table[(size_t) (l * n_expert + e)] = (int32_t) r;
+        const size_t index = (size_t) l * (size_t) n_expert + (size_t) e;
+        if (table[index] != -1) {
+            err = "write_expert_profile: duplicate ranked pair";
+            return false;
+        }
+        table[index] = (int32_t) r;
         pairs.push_back((uint16_t) l);
         pairs.push_back((uint16_t) e);
     }
