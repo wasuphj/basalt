@@ -142,6 +142,7 @@ public:
     bool aei_update_staged_split(const aei::LayerCostRank* measured_cpu,
                                  bool baseline, std::string& error);
     uint64_t aei_staged_dma_ns() const;
+    bool aei_staged_split_available() const noexcept;
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
     /// The peer expert tier the window drives itself (persistent kernel, mapped rings) instead of the pool launching it
