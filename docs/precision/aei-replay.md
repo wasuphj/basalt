@@ -314,7 +314,8 @@ A learned `--expert-profile-save` file is paired with
 `<profile>.model-id`. The identity is derived from the actual packed model's **sorted,
 non-profile sections**, their byte sizes and SHA-256 checksums; it
 requires a metadata section, an identifiable weight-bearing section,
-and populated section digests. The section names depend on model
+and populated section digests. An additional SHA-256 compresses the
+section manifest into a constant-length versioned model identity. The section names depend on model
 format, so optional or nonexistent names do not disable saving.
 These digests are already stored by the .basalt packer; no full
 weight rehash is needed at each startup. On startup a learned profile is used only if the identity
@@ -500,3 +501,22 @@ original baseline exploration samples, preventing a temporary
 baseline probe from changing the estimate it is supposed to challenge.
 This preservation is opt-in only; normal Basalt startup allocates none
 of these policy data structures.
+
+## Two-file profile commit safety
+
+Saving an expert profile now writes a small `.model-id` receipt that
+contains both the model's *versioned SHA-256 section-manifest identity*
+and the SHA-256 of the exact learned rank file. The receipt itself is
+written to a temporary file and atomically replaced only after the rank
+file has been written and hashed. A crash or failed sidecar replacement
+therefore leaves a *mismatched* old receipt rather than silently
+accepting new profile bytes under an old model ID. Both hashes are
+checked before loading learned ranks; missing/legacy receipts fall back
+to the embedded model profile.
+
+The learned rank file is capped at 64 MiB for this sidecar binding;
+large packed weight files are never scanned during startup identity
+calculation. These checks detect accidental partial updates and
+cross-model profile reuse. They do not authenticate a maliciously
+rewritten pair of files or make the pair a single filesystem
+transaction.
