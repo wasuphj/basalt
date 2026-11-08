@@ -233,6 +233,9 @@ bool Verifier::dm_init(std::string& err) {
         if (!sok) { err = "verify: the staged share's buffers"; return false; }
         std::memset(d->stage_host, 0, (size_t) LE * 8);
         d->stage_gen = warm_src_->places_generation() + 1;   // read at the first batch window
+        std::copy(kt.begin(), kt.end(), d->stage_baseline.begin());
+        d->stage_slots = stage_slots;
+        d->stage_blob_bytes = (uint64_t)blob;
         d->stage_stride = stride;
         d->stage_blocks = 8;
         d->stage_min = 1;
