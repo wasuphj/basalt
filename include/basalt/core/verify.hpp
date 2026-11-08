@@ -137,6 +137,11 @@ public:
     void set_aei_predictive_prefetch(aei::NextExpertPrefetch* predictor, uint32_t n_expert) noexcept {
         router_capture_.set_prefetch_index(predictor, n_expert);
     }
+    // Called only at an idle engine boundary. GPU routing decisions and
+    // expert arithmetic remain unchanged; only CPU/staging share is adjusted.
+    bool aei_update_staged_split(const aei::LayerCostRank* measured_cpu,
+                                 bool baseline, std::string& error);
+    uint64_t aei_staged_dma_ns() const;
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
     /// The peer expert tier the window drives itself (persistent kernel, mapped rings) instead of the pool launching it
