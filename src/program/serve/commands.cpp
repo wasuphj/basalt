@@ -108,7 +108,8 @@ Flow Runtime::dispatch() {
                     std::printf("AEI_COST cpu %u %u %llu\\n", n, cpu.observations,
                                 (unsigned long long)cpu.execution_ns);
                 }
-                std::printf("PROBE cost end\\n");
+                std::printf("PROBE cost end dropped_samples=%llu\\n",
+                            (unsigned long long)aei_cpu_costs->dropped_samples());
             }
         } else if (line == "PROBE trace on") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
