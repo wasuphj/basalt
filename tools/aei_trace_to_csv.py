@@ -2,8 +2,11 @@
 """Convert Basalt's opt-in AEI diagnostic lines to ordered router CSV."""
 import argparse
 import csv
+import os
 import re
 import sys
+import tempfile
+from pathlib import Path
 
 EVENT = re.compile(r"AEI ([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)$")
 END = re.compile(r"PROBE trace end count=([0-9]+) dropped_capacity=([0-9]+) dropped_contention=([0-9]+)$")
@@ -65,12 +68,38 @@ def convert(lines, writer, require_lossless=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-lossless", action="store_true")
+    parser.add_argument("--output", type=Path, help="atomically publish a validated CSV to this file")
     args = parser.parse_args(argv)
+    temporary = None
     try:
-        events, dropped, batches = convert(sys.stdin, csv.writer(sys.stdout), args.require_lossless)
-    except ValueError as error:
+        if args.output is None:
+            # Kept for pipelines. On validation failure stdout may contain
+            # incomplete CSV; callers must check the process exit status.
+            events, dropped, batches = convert(
+                sys.stdin, csv.writer(sys.stdout), args.require_lossless)
+        else:
+            destination = args.output
+            if not destination.name:
+                raise ValueError("invalid output filename")
+            # Create in destination directory so replace is same-filesystem.
+            fd, temporary = tempfile.mkstemp(
+                dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                events, dropped, batches = convert(
+                    sys.stdin, csv.writer(handle), args.require_lossless)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+            temporary = None
+    except (ValueError, OSError) as error:
         print(f"aei-trace-to-csv: {error}", file=sys.stderr)
         return 2
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
     print(f"aei-trace-to-csv: events={events} batches={batches} new_drops={dropped}", file=sys.stderr)
     return 0
 

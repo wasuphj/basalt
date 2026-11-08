@@ -136,7 +136,7 @@ Capture the diagnostic output of `PROBE trace drain` in a log. Convert
 the ordered records (other engine log lines are ignored) with:
 
 ```sh
-python tools/aei_trace_to_csv.py --require-lossless < engine-trace.log > ordered.csv
+python tools/aei_trace_to_csv.py --require-lossless --output ordered.csv < engine-trace.log
 bin/aei-shadow 512 48 ordered.csv
 ```
 
@@ -144,9 +144,12 @@ The model geometry shown is an example. The converter rejects malformed
 events, duplicate or regressing per-stream sequence values, inconsistent
 drain counts, counter resets, and any observed loss if
 `--require-lossless` is selected. It validates at most 65,536 distinct
-stream cursors and consumes input incrementally. Check exit status
-**before** using `ordered.csv`: shell redirection may leave an incomplete
-file on validation failure. Input should cover the full tracing session,
+stream cursors and consumes input incrementally. The recommended `--output` mode writes to a sibling temporary file,
+flushes and fsyncs before atomically replacing `ordered.csv` on
+successful validation. On loss or parse failure an earlier verified
+output is preserved and the incomplete temporary file is removed.
+Plain stdout streaming remains supported for pipelines, but a failed
+pipeline can leave incomplete redirected output. Check exit status. Input should cover the full tracing session,
 including drain summaries. After `trace off`, start a new conversion
 session because loss counters reset with a newly allocated buffer.
 
