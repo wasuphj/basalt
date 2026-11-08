@@ -158,6 +158,7 @@ void usage() {
                  "                       (on only when it keeps every expert off the SSD).\n"
                  "  --peer-reserve-mib N  VRAM the peer tier leaves free on its card (default 600)\n"
                  "  --aei-auto           --serve: enable request-boundary adaptive policy exploration (default off)\n"
+                 "  --aei-state PATH     --serve --aei-auto: restore/save model-bound policy evidence\n"
                  "  --adapt-every N      adaptive expert tier: a round every N decode windows (default 1 for a\n"
                  "                       server, with or without the peer tier; 4 with the layers split over GPUs\n"
                  "                       and outside --serve; 0 = the VRAM experts stay as loaded)\n"

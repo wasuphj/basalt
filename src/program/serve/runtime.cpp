@@ -1,5 +1,6 @@
 // src/program/serve/runtime.cpp - lifecycle of the persistent engine.
 #include "state.hpp"
+#include "basalt/platform/aei_policy_store.hpp"
 #include <algorithm>
 
 namespace basalt::program::serve {
@@ -49,6 +50,37 @@ void Runtime::stop_aei_trace() {
     aei_trace.reset();
 }
 
+std::string Runtime::aei_checkpoint_identity() const {
+    if (!model_file || !chosen_cards || chosen_cards->empty()) return {};
+    const std::string model = model_file->expert_profile_identity();
+    if (model.empty()) return {};
+    std::string key = "AEI-EXEC-ENV-1\n" + model;
+    key += "gpu=" + o.gpu + "\npeer=" + std::to_string(o.peer_device) +
+           "\nsplit=" + o.split_device + "\n";
+    key += "geometry=" + std::to_string(g.n_layers) + ":" +
+           std::to_string(g.n_expert) + "\n";
+    key += "adapt=" + std::to_string(o.adapt_every) + ":" +
+           std::to_string(o.adapt_swaps) + ":" +
+           std::to_string(o.adapt_decay) + "\n";
+    for (const auto& card : *chosen_cards) {
+        key += card.token + ":" + card.name + ":" +
+               std::to_string(card.cc_major) + "." +
+               std::to_string(card.cc_minor) + ":" +
+               std::to_string(card.vram) + "\n";
+    }
+    return basalt::platform::aei_sha256_hex(key);
+}
+
+bool Runtime::aei_save_checkpoint() {
+    if (!aei_auto.enabled() || o.aei_state_path.empty()) return true;
+    const std::string id = aei_checkpoint_identity();
+    if (id.empty()) return false;
+    if (!basalt::platform::aei_save_policy_checkpoint(
+            o.aei_state_path, id, aei_auto.checkpoint())) return false;
+    aei_checkpoint_saved_at = aei_auto.completed();
+    return true;
+}
+
 bool Runtime::aei_enable_automatic(std::string& err) {
     // Enabling anew is a new exploration session. Release old observers,
     // not simply the selector statistics; avoid carrying stale model costs.
@@ -78,6 +110,18 @@ bool Runtime::aei_enable_automatic(std::string& err) {
         (supported & (1u << (unsigned)AutoArm::split)))
         supported |= (1u << (unsigned)AutoArm::prefetch_split);
     aei_auto.enable(supported);
+    if (!o.aei_state_path.empty()) {
+        std::string payload;
+        const std::string identity = aei_checkpoint_identity();
+        if (!identity.empty() &&
+            basalt::platform::aei_load_policy_checkpoint(
+                o.aei_state_path, identity, payload) &&
+            aei_auto.restore_checkpoint(payload, supported)) {
+            aei_checkpoint_saved_at = aei_auto.completed();
+            basalt::log::info("basalt serve", "AEI restored bounded policy evidence from %s",
+                              o.aei_state_path.c_str());
+        }
+    }
     basalt::log::info("basalt serve", "AEI auto policy enabled, candidate mask 0x%x", supported);
     return true;
 }
@@ -233,6 +277,12 @@ int Runtime::run_requests() {
                 }
             }
         }
+        if (flow == Flow::next && aei_auto.enabled() &&
+            !o.aei_state_path.empty() &&
+            aei_auto.completed() - aei_checkpoint_saved_at >= 64) {
+            if (!aei_save_checkpoint())
+                basalt::log::warn("basalt serve", "AEI policy evidence checkpoint write failed");
+        }
         if (flow == Flow::error) {
             stop_aei_trace();
             return 1;
@@ -242,6 +292,8 @@ int Runtime::run_requests() {
 }
 
 int Runtime::shutdown() {
+    if (aei_auto.enabled() && !aei_save_checkpoint())
+        basalt::log::warn("basalt serve", "AEI policy evidence checkpoint write failed");
     // Final trace receipt must be emitted even on QUIT or stdin EOF.
     stop_aei_trace();
     // the conversations this process holds go to the disk tier before it ends

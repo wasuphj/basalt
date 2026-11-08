@@ -24,6 +24,10 @@ std::string profile_key(const basalt::core::Json& meta) {
 }
 
 std::optional<int> resolve_model_options(Options& o, bool multi_gpu) {
+    if (!o.aei_state_path.empty() && (!o.aei_auto || !o.serve)) {
+        basalt::log::error("basalt generate", "--aei-state requires --serve --aei-auto");
+        return 2;
+    }
     if (o.aei_auto && !o.serve) {
         basalt::log::error("basalt generate", "--aei-auto requires --serve");
         return 2;
