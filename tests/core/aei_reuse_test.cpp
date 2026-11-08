@@ -1,6 +1,7 @@
 #include "basalt/core/aei_reuse.hpp"
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <thread>
 #include <array>
 using namespace basalt::core::aei;
@@ -27,5 +28,12 @@ int main() {
     try { ExpertReuseIndex oversized((1u << 20) + 1); }
     catch (const std::invalid_argument&) { invalid = true; }
     CHECK(invalid);
+    const std::string checkpoint = r.checkpoint();
+    ExpertReuseIndex resumed(128);
+    CHECK(resumed.restore_checkpoint(checkpoint));
+    CHECK(resumed.priority_multiplier(5) == 1.0f);
+    resumed.observe(5);
+    CHECK(resumed.priority_multiplier(5) >= 0.5f);
+    CHECK(!resumed.restore_checkpoint(checkpoint.substr(0, checkpoint.size()-1)));
     std::puts("aei_reuse_test: OK");
 }
