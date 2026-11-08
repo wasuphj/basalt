@@ -29,6 +29,7 @@ endif()
 add_library(platform STATIC
   ${BASALT_CMAKE_ROOT}/src/platform/file.cpp ${BASALT_CMAKE_ROOT}/src/platform/memory.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/aei_trace_writer.cpp
+  ${BASALT_CMAKE_ROOT}/src/platform/aei_prefetch_worker.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/resident_pool.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/direct_file.cpp ${BASALT_CMAKE_ROOT}/src/platform/process.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/mapped_file.cpp ${BASALT_CMAKE_ROOT}/src/platform/cpu.cpp
