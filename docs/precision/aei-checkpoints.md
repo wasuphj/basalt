@@ -36,3 +36,12 @@ sources), observed Expert reuse intervals, and CPU miss service cost
 estimates. Absolute recency timestamps, in-flight predictions,
 GPU DMA calibration, CUDA graph state, and actual VRAM residency are
 not restored. Serialized state is bounded to 16 MiB.
+
+## Completion-time accounting
+
+Automatic policy samples use Decode latency measured *after* the final
+asynchronous GPU state commit. A fast host return before the GPU's
+commit fence is not accepted as a faster request. Canceled or failed
+requests do not promote the policy. These are completed-request
+latencies, separate from GPU-only kernel durations and the offline
+benchmark's synthetic speed proxies.
