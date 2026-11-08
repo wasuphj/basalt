@@ -1,5 +1,6 @@
 // src/program/serve/runtime.cpp - lifecycle of the persistent engine.
 #include "state.hpp"
+#include <algorithm>
 
 namespace basalt::program::serve {
 
@@ -44,6 +45,32 @@ void Runtime::stop_aei_trace() {
 int Runtime::run_requests() {
     for (;;) {
         const Flow flow = dispatch();
+        // Refit the device's CPU/staging split between completed requests,
+        // never in the graph or inside the CPU pool callback. Updates are
+        // rate limited to >=10% measured CPU cost movement.
+        if (flow == Flow::proceed && aei_split_costs && !batch_on() &&
+            !ba_job && (!piped || !pipe_inflight())) {
+            const uint64_t current = aei_split_costs->reference_cost_ns((size_t)g.n_layers);
+            const uint64_t previous = aei_split_last_cpu_ns;
+            const uint64_t delta = current >= previous ? current - previous : previous - current;
+            if (current && (!previous || delta >= std::max<uint64_t>(1, previous / 10))) {
+                const bool has_main = ver.aei_staged_split_available();
+                const bool has_alt = ver_b.aei_staged_split_available();
+                std::string first, second, ignored;
+                const bool ok_main = !has_main ||
+                    ver.aei_update_staged_split(aei_split_costs.get(), false, first);
+                const bool ok_alt = !has_alt ||
+                    ver_b.aei_update_staged_split(aei_split_costs.get(), false, second);
+                if ((has_main || has_alt) && ok_main && ok_alt) {
+                    aei_split_last_cpu_ns = current;
+                } else {
+                    if (has_main && ok_main)
+                        (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    if (has_alt && ok_alt)
+                        (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                }
+            }
+        }
         if (flow == Flow::error) {
             stop_aei_trace();
             return 1;
