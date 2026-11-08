@@ -22,6 +22,7 @@
 #include "basalt/core/host_pool.hpp"
 #include "basalt/core/pinned.hpp"
 #include "basalt/platform/file.hpp"
+#include "basalt/platform/aei_trace_writer.hpp"
 #include "basalt/platform/memory.hpp"
 #include "basalt/platform/process.hpp"
 #include "basalt/platform/system.hpp"
@@ -209,6 +210,7 @@ private:
     // Opt-in research telemetry. Allocated only by PROBE trace on at idle.
     std::unique_ptr<basalt::core::aei::RouterEventBuffer> aei_trace{};
     std::unique_ptr<basalt::core::aei::ShadowScheduler> aei_cpu_costs{};
+    std::unique_ptr<basalt::platform::AeiTraceWriter> aei_trace_writer{};
     uint64_t aei_trace_next_stream = 1;
     basalt::core::Verifier ver{};
     basalt::core::VerifyHits vh{};

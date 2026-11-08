@@ -28,13 +28,16 @@ endif()
 # standalone test programs can all link it.
 add_library(platform STATIC
   ${BASALT_CMAKE_ROOT}/src/platform/file.cpp ${BASALT_CMAKE_ROOT}/src/platform/memory.cpp
+  ${BASALT_CMAKE_ROOT}/src/platform/aei_trace_writer.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/resident_pool.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/direct_file.cpp ${BASALT_CMAKE_ROOT}/src/platform/process.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/mapped_file.cpp ${BASALT_CMAKE_ROOT}/src/platform/cpu.cpp
   ${BASALT_CMAKE_ROOT}/src/platform/system.cpp ${BASALT_CMAKE_ROOT}/src/platform/dynlib.cpp)
 target_include_directories(platform PUBLIC ${BASALT_CMAKE_ROOT}/include)
 # dlopen (DynLib) lives in libdl before glibc 2.34
+find_package(Threads REQUIRED)
 target_link_libraries(platform PUBLIC warnings ${CMAKE_DL_LIBS})
+target_link_libraries(platform PUBLIC Threads::Threads)
 if(WIN32)
   target_link_libraries(platform PUBLIC advapi32)   # the processor name in the registry
 endif()

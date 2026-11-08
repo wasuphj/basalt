@@ -170,3 +170,21 @@ execution time, PCIe DMA time or critical-path latency. A candidate
 CPU/GPU placement must remain `baseline` until separately measured GPU
 observations are available. The probe is disabled by default and needs
 on-device benchmarking to quantify timestamp overhead.
+
+## Asynchronous disk capture
+
+At an idle engine command boundary, `PROBE trace file /absolute/path/events.csv`
+starts a platform-owned low-priority polling writer. Each event is enqueued by
+the existing nonblocking producer; file opening, writing and flushing happen
+outside inference. `PROBE trace stats` prints dropped events, written rows
+and I/O errors. `PROBE trace off` detaches the verifier, joins the writer,
+drains pending events, closes the file and reports final counts.
+
+The supplied path is opened with `wb` (existing file truncated); choose
+a new output filename for each session. Avoid placing this on a congested
+disk, and check `io_errors=0`, `dropped_capacity=0` and
+`dropped_contention=0` at shutdown before considering a trace lossless.
+Only files with a clean session end should be evaluated. The writer
+continues draining after a write failure to keep inference nonblocking,
+so I/O errors invalidate completeness. A very slow filesystem can cause
+ring overflow despite asynchronous output.

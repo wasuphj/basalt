@@ -111,6 +111,34 @@ Flow Runtime::dispatch() {
                 std::printf("PROBE cost end dropped_samples=%llu\n",
                             (unsigned long long)aei_cpu_costs->dropped_samples());
             }
+        } else if (line.rfind("PROBE trace file ", 0) == 0) {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
+            else if (aei_trace_writer) perr = "PROBE trace: file writer already active";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                const std::string path = line.substr(17);
+                if (path.empty()) perr = "PROBE trace file: missing output path";
+                else {
+                    if (!aei_trace) aei_trace = std::make_unique<basalt::core::aei::RouterEventBuffer>();
+                    auto writer = std::make_unique<basalt::platform::AeiTraceWriter>();
+                    if (!writer->start(path, *aei_trace, perr)) {
+                        // Preserve any prior ring/diagnostics on startup error.
+                    } else {
+                        aei_trace_writer = std::move(writer);
+                        std::printf("PROBE trace file on capacity=%zu\n",
+                                    basalt::core::aei::RouterEventBuffer::kCapacity);
+                    }
+                }
+            }
+        } else if (line == "PROBE trace stats") {
+            if (!aei_trace) perr = "PROBE trace: not enabled";
+            else {
+                std::printf("PROBE trace stats dropped_capacity=%llu dropped_contention=%llu written=%llu io_errors=%llu\n",
+                            (unsigned long long)aei_trace->dropped_capacity(),
+                            (unsigned long long)aei_trace->dropped_contention(),
+                            (unsigned long long)(aei_trace_writer ? aei_trace_writer->written() : 0),
+                            (unsigned long long)(aei_trace_writer ? aei_trace_writer->io_errors() : 0));
+            }
         } else if (line == "PROBE trace on") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
             else {
@@ -125,7 +153,14 @@ Flow Runtime::dispatch() {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 ver.set_aei_router_trace(nullptr, 0);
                 ver_b.set_aei_router_trace(nullptr, 0);
-                // Events already in the buffer are discarded on explicit shutdown.
+                // Stop and flush the I/O worker before destroying its source ring.
+                if (aei_trace_writer) {
+                    aei_trace_writer->stop();
+                    std::printf("PROBE trace file end written=%llu io_errors=%llu\n",
+                                (unsigned long long)aei_trace_writer->written(),
+                                (unsigned long long)aei_trace_writer->io_errors());
+                    aei_trace_writer.reset();
+                }
                 aei_trace.reset();
                 std::printf("PROBE trace off\n");
             }
@@ -134,6 +169,7 @@ Flow Runtime::dispatch() {
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 if (!aei_trace) perr = "PROBE trace: not enabled";
+                else if (aei_trace_writer) perr = "PROBE trace: file writer owns the drain";
                 else {
                     std::array<basalt::core::aei::RoutedExpertEvent, 128> events{};
                     const size_t count = aei_trace->drain(events.data(), events.size());
