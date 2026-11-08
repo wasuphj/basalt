@@ -191,3 +191,31 @@ Only files with a clean session end should be evaluated. The writer
 continues draining after a write failure to keep inference nonblocking,
 so I/O errors invalidate completeness. A very slow filesystem can cause
 ring overflow despite asynchronous output.
+
+## Benchmark promotion gate (run on the target GPU)
+
+Use the **existing** `basalt-bench -o json` executable for the same
+model, driver, GPU/power limit, fixtures and three or more repetitions
+in each arm. Capture separate JSON files for the baseline and the
+candidate. The benchmark should include prefill and decode fixtures and
+a completed PPL/KLD quality run. Compare the actual outputs with:
+
+```sh
+python tools/aei_ab_gate.py baseline.json candidate.json
+```
+
+Exit code 0 means the provided benchmark passes the default experimental
+thresholds: at least +10% median TG in every decode fixture, no more
+than 2% median PP regression, quality KLD p99 <= 0.1, top-1 agreement
+>= 99%, and absolute log PPL ratio <= 0.02. Exit 1 means a gate failure;
+exit 2 means **indeterminate** (missing/incompatible metrics or
+insufficient runs). These thresholds are a starting research policy,
+not a validated Basalt production SLO. All test identities and
+repetition sets must match; GPU identity, drivers and power limits
+must also match. `engine_args` may intentionally differ for the
+candidate but should be reviewed and preserved with artifacts.
+
+Even a PASS is not a proven improvement of all inference use cases:
+measure TTFT, complete request latency, VRAM, host RSS, concurrency
+scaling and application-level quality independently. Never use
+fabricated JSON or synthetic toy fixtures as performance evidence.
