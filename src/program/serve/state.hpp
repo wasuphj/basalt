@@ -585,6 +585,8 @@ private:
     int init_batch();
     int run_requests();
     Flow dispatch();
+    // Safe for idle PROBE off and QUIT/EOF paths; joins writer before deleting ring.
+    void stop_aei_trace();
     int shutdown();
 };
 
