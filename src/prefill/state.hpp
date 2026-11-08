@@ -33,6 +33,9 @@ struct Prefill::Impl {
     int64_t hist_n = 0, hist_tokens = 0;
     bool hist_on = false;
     core::aei::RouterEventBuffer* aei_trace_sink = nullptr;
+    core::aei::NextExpertPrefetch* aei_prefetch_advisor = nullptr;
+    uint32_t aei_previous_expert = 0;
+    bool aei_have_previous = false;
     uint64_t aei_trace_stream = 0;
     uint64_t aei_trace_sequence = 0;
     cudaStream_t cs = nullptr, copy = nullptr;

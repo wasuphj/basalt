@@ -452,3 +452,22 @@ used by `PROBE policy auto on`, not a separate tuning system.
 The default remains OFF, and non-server generation rejects the option.
 Request-boundary decisions, experiment isolation and baseline fallback
 are otherwise identical to the interactive mode.
+
+## Prefill-to-decode predictor warm start
+
+When `PROBE policy prefetch on` or the automatic FSM selects the
+Prefetch arm, both the batched Prefill and Decode Verifier paths now
+share the *same* bounded `NextExpertPrefetch` instance. Prefill uses
+the exact token-order Expert IDs that the existing CPU grouping step
+already received from the GPU, so no new D2H transfer or CUDA kernel
+is needed. A per-Prefill-stage predecessor is reset for every run,
+preventing false transitions across requests or GPU hand-off stages.
+The sparse transition table is guarded by its existing nonblocking
+observer lock to tolerate parallel pipeline stages.
+
+This means a long prompt can train the next-expert predictor before
+the first decode window. The predicted CPU source read-ahead and
+adaptive GPU cache admission subsequently consume those observations.
+When the policy changes, Prefill observers are detached before the
+shared predictor is destroyed. The original prompt output and GPU
+routing logic are untouched.
