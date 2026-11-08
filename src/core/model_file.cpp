@@ -321,16 +321,35 @@ bool ModelFile::open(const std::string& path, std::string& err) {
 }
 
 std::string ModelFile::expert_profile_identity() const {
-    // The packed container uses SHA-256 per section, computed when it is
-    // constructed. Require all routing-influencing weights and metadata.
-    constexpr const char* required[] = {"meta", "dense", "experts", "experts.layout"};
+    // A Basalt pack's section list varies by artifact and model family.
+    // Bind to ALL immutable payload section hashes, not a guessed set of
+    // fixed section names. The optional profile is a derived artifact and
+    // is deliberately excluded to avoid circular identity dependence.
+    if (!find("meta")) return {};
+    std::vector<const Section*> inputs;
+    bool weights = false;
+    for (const Section& section : sections_) {
+        if (section.bytes == 0 || section.name == "profile" ||
+            section.name == "expert_profile" || section.name == "learned-profile")
+            continue;
+        const bool weight_section = section.name == "experts" ||
+            section.name == "dense" || section.name == "gguf" ||
+            section.name == "weights" || section.name.find("expert") != std::string::npos ||
+            section.name.find("tensor") != std::string::npos;
+        if (weight_section) weights = true;
+        bool digest_present = false;
+        for (const uint8_t b : section.sha256) digest_present |= b != 0;
+        if (!digest_present) return {};  // no trustworthy packed hash
+        inputs.push_back(&section);
+    }
+    if (!weights) return {};
+    std::sort(inputs.begin(), inputs.end(), [](const Section* a, const Section* b) {
+        return a->name < b->name;
+    });
     static constexpr char hex[] = "0123456789abcdef";
-    std::string out = "basalt-model-sections-v1";
-    for (const char* name : required) {
-        const Section* section = find(name);
-        if (!section || section->bytes == 0) return {};
-        out += "\n";
-        out += name;
+    std::string out = "basalt-model-sections-v2\n";
+    for (const Section* section : inputs) {
+        out += section->name;
         out += ":";
         out += std::to_string(section->bytes);
         out += ":";
@@ -338,8 +357,9 @@ std::string ModelFile::expert_profile_identity() const {
             out.push_back(hex[b >> 4]);
             out.push_back(hex[b & 15]);
         }
+        out.push_back('\n');
     }
-    return out + "\n";
+    return out;
 }
 
 const ModelFile::Section* ModelFile::find(const std::string& name) const {
