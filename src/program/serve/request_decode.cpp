@@ -13,6 +13,19 @@ Request::DecSnap Request::dec_snap() {
 // the verify windows: the first holds the last prompt token, with the rest of the last window
 Flow Request::decode() {
     if (runtime_.mtp_on && !runtime_.mtp.use_main(runtime_.err)) { std::printf("ERR %s\n", runtime_.err.c_str()); return Flow::error; }   // the windows between prompt chunks swapped it
+    // Bind each verifier chain to a distinct request stream. A fresh stream
+    // prevents transitions from crossing request boundaries or MTP chains.
+    if (runtime_.aei_trace) {
+        const uint64_t base = runtime_.aei_trace_next_stream;
+        if (base > UINT64_MAX - 2) {
+            runtime_.ver.set_aei_router_trace(nullptr, 0);
+            runtime_.ver_b.set_aei_router_trace(nullptr, 0);
+        } else {
+            runtime_.aei_trace_next_stream += 2;
+            runtime_.ver.set_aei_router_trace(runtime_.aei_trace.get(), base);
+            runtime_.ver_b.set_aei_router_trace(runtime_.aei_trace.get(), base + 1);
+        }
+    }
     p = fold_p0;
     x = (int32_t) ids[(size_t) fold_p0];
     {   // a request decoded here starts its adaptation from the experts its own prompt routed to
