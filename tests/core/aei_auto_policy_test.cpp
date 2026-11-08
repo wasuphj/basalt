@@ -1,5 +1,6 @@
 #include "basalt/core/aei_auto_policy.hpp"
 #include <cstdio>
+#include <string>
 #include <cmath>
 using namespace basalt::core::aei;
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr,"FAIL %d: %s\n",__LINE__,#x); return 1; } } while (0)
