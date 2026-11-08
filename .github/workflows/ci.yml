@@ -31,6 +31,18 @@ env:
   CUDA_VERSION: "13.0.2"
 
 jobs:
+  aei-host-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: AEI CPU-only compile and runtime regressions
+        run: bash tools/aei_cpu_smoke.sh
+      - name: AEI Python evidence gates
+        run: python3 -m unittest discover -s tools -p "test_aei_*.py"
+
   lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
