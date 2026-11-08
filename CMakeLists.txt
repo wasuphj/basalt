@@ -77,6 +77,7 @@ endif()
 
 # The `warnings` and `platform` targets, one file shared with the standalone `tools/vision` configuration.
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/platform.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/host_pool.cmake)
 
 # BASALT_MODELS: which models this build contains (all of them by default).
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/models.cmake)
@@ -371,7 +372,7 @@ target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The selected runtime is PUBLIC because graph.cpp is a HOST translation unit that calls cudaGraphLaunch and
 # cudaEventQuery: the .cu sources get cudart through the CUDA language rules, a .cpp does not, and the
 # linker error ("unresolved external symbol cudaGraphInstantiate") names the function rather than the cause.
-target_link_libraries(core PUBLIC model_file artifact platform warnings ${_gpu_runtime_target})
+target_link_libraries(core PUBLIC model_file artifact platform host_memory warnings ${_gpu_runtime_target})
 
 add_executable(basalt-device src/models/qwen4exp/plan/device_main.cpp)
 target_link_libraries(basalt-device PRIVATE core)
@@ -500,6 +501,13 @@ if(BUILD_TESTING)
   endif()
   # the conversation cache: retention bookkeeping (header-only), the memory budget, the snapshot's validation (host
   # only: CUDA is linked but never initialized) and its transfer-failure paths, and a snapshot round trip on a device
+  add_executable(host_arena_test tests/core/host_arena_test.cpp)
+  target_include_directories(host_arena_test PRIVATE include)
+  basalt_cpu_test(NAME host_arena_test COMMAND host_arena_test)
+  add_executable(host_pool_gpu_test tests/core/host_pool_gpu_test.cpp)
+  target_link_libraries(host_pool_gpu_test PRIVATE host_memory)
+  basalt_gpu_test(NAME host_pool_gpu_test COMMAND host_pool_gpu_test)
+  set_tests_properties(host_pool_gpu_test PROPERTIES SKIP_RETURN_CODE 77)
   add_executable(conversation_cache_test tests/core/conversation_cache_test.cpp)
   target_include_directories(conversation_cache_test PRIVATE include)
   basalt_cpu_test(NAME conversation_cache_test COMMAND conversation_cache_test)
@@ -1219,6 +1227,9 @@ endif()
 
 # working-set lock of a host region (CPU only).
 add_executable(platform_memory_test tests/platform/memory_test.cpp)
+add_executable(resident_pool_test tests/platform/resident_pool_test.cpp)
+target_link_libraries(resident_pool_test PRIVATE platform)
+basalt_cpu_test(NAME resident_pool_test COMMAND resident_pool_test)
 target_link_libraries(platform_memory_test PRIVATE core ${_gpu_runtime_target})
 basalt_embed_manifest(platform_memory_test)
 basalt_cpu_test(NAME platform_memory_test COMMAND platform_memory_test)
