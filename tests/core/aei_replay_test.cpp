@@ -20,6 +20,16 @@ int main() {
         assert(r.result().accesses == 7);
         assert(r.result().hits >= 2);
     }
+    // An expert with observed short reuse should survive a one-off miss.
+    Replay stale(3, 2, Policy::least_stale);
+    stale.access({0, 100, 10});
+    stale.access({1, 100, 10});
+    stale.access({0, 100, 10});
+    stale.access({2, 100, 10});
+    const auto after_insert = stale.result();
+    stale.access({0, 100, 10});
+    assert(stale.result().hits == after_insert.hits + 1);
+    assert(stale.resident_count() == 2);
     Replay empty(2, 0, Policy::lru);
     empty.access({0, 50, 20});
     assert(empty.result().hits == 0 && empty.result().transfers == 0);
