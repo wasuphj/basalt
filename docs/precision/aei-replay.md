@@ -257,3 +257,14 @@ detaches both observers and restores unchanged rankings. Defaults stay
 OFF. The heuristic does not alter per-layer-only adaptation, slot
 ownership, GPU kernels or CUDA copy semantics; real A/B is needed
 before treating it as an improvement.
+
+## Comparable-work A/B safeguard
+
+The AEI benchmark gate also requires equal generated token counts and
+identical finish reasons for paired decode repetitions. Faster runs
+that stopped early, hit a different EOS or generated fewer tokens are
+**FAIL**, not accepted throughput improvements. Prefill repetitions
+must match prompt depth, input tokens and reused-prefix tokens whenever
+those measurements are supplied. Missing or malformed work accounting
+is **INDETERMINATE**. Always keep the source JSON artifacts for
+independent inspection.

@@ -60,6 +60,31 @@ def compare(baseline, candidate, min_repetitions=3, min_tg_gain=0.10,
             left, right = a[test][rep], b[test][rep]
             ar.append(finite_positive(left.get(field), f"baseline {test} {rep}"))
             br.append(finite_positive(right.get(field), f"candidate {test} {rep}"))
+            # Reject results that look faster only because less work ran.
+            # A comparable decode must generate the same number of tokens
+            # and terminate the same way, including after speculative reject.
+            if is_decode:
+                left_tokens, right_tokens = left.get("tokens"), right.get("tokens")
+                if (not isinstance(left_tokens, int) or isinstance(left_tokens, bool)
+                        or not isinstance(right_tokens, int) or isinstance(right_tokens, bool)
+                        or left_tokens <= 0 or right_tokens <= 0):
+                    raise Indeterminate(f"{test}/{rep}: missing or invalid generated token count")
+                if left_tokens != right_tokens:
+                    problems.append(f"{test}/{rep}: generated token count differs")
+                left_finish, right_finish = left.get("finish"), right.get("finish")
+                if not isinstance(left_finish, str) or not isinstance(right_finish, str):
+                    raise Indeterminate(f"{test}/{rep}: missing finish reason")
+                if left_finish != right_finish:
+                    problems.append(f"{test}/{rep}: finish reason differs")
+            else:
+                # Preserve input and prefill cache reuse across both arms.
+                for name in ("depth_tokens", "prompt_tokens", "reused_tokens"):
+                    if name in left or name in right:
+                        if (name not in left or name not in right or
+                                not isinstance(left[name], int) or not isinstance(right[name], int)):
+                            raise Indeterminate(f"{test}/{rep}: incompatible {name}")
+                        if left[name] != right[name]:
+                            problems.append(f"{test}/{rep}: {name} differs")
             for item in (left, right):
                 if item.get("checksum_ok") is False or item.get("finish") in ("error", "failed"):
                     problems.append(f"{test}: checksum or finish failed")
