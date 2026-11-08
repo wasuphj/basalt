@@ -18,5 +18,15 @@ int main() {
     for (uint64_t i = 0; i < NextExpertPrefetch::kFreshEvents + 10; ++i)
         p.observe(6, 7);
     CHECK(p.boost(3) == 0.0f);
+    // Restart preserves learned conditional transitions, but never an
+    // unconsumed old prediction timestamp.
+    const std::string snapshot = p.checkpoint();
+    NextExpertPrefetch restored(8);
+    CHECK(restored.restore_checkpoint(snapshot));
+    CHECK(restored.boost(3) == 0.0f);
+    restored.observe(1, 2);
+    CHECK(restored.boost(3) > 0.0f);
+    CHECK(!restored.restore_checkpoint(snapshot.substr(0, snapshot.size()-1)));
+    CHECK(!restored.restore_checkpoint(std::string(snapshot.size(), '\0')));
     std::puts("aei_next_prefetch_test: OK");
 }
