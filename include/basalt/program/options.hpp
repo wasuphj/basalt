@@ -181,6 +181,7 @@ struct Options {
     double pcie_frac = -1.0;
     /// Every `adapt_every` rounds, swap up to `adapt_swaps` of the most-routed missing experts into the VRAM tier in
     /// place of the least-routed resident ones (decayed counts).  0 = static residency.
+    bool aei_auto = false;  ///< --aei-auto: opt-in online AEI adaptive policy FSM for persistent serve.
     int adapt_every = 4;
     bool adapt_every_given = false;   // --adapt-every on the command line
     bool peer_exclusive_given = false;   // --peer-exclusive on the command line
