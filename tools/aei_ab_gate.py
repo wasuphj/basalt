@@ -74,7 +74,10 @@ def compare(baseline, candidate, min_repetitions=3, min_tg_gain=0.10,
     for key in ("kld_p99", "top1_pct", "ppl", "base_ppl"):
         if key not in qa or key not in qb:
             raise Indeterminate(f"quality lacks {key}")
-    if finite_positive(qb["kld_p99"], "candidate kld_p99") > max_kld_p99:
+    kld = qb["kld_p99"]
+    if isinstance(kld, bool) or not isinstance(kld, (float, int)) or not math.isfinite(kld) or kld < 0:
+        raise Indeterminate("candidate kld_p99 is missing or invalid")
+    if kld > max_kld_p99:
         problems.append("KLD p99 exceeds threshold")
     if finite_positive(qb["top1_pct"], "candidate top1_pct") < min_top1:
         problems.append("top1 agreement below threshold")
