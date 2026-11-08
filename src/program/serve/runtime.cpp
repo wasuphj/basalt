@@ -74,6 +74,9 @@ bool Runtime::aei_enable_automatic(std::string& err) {
         g.n_layers <= (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers &&
         (ver.aei_staged_split_available() || ver_b.aei_staged_split_available()))
         supported |= (1u << (unsigned)AutoArm::split);
+    if ((supported & (1u << (unsigned)AutoArm::prefetch)) &&
+        (supported & (1u << (unsigned)AutoArm::split)))
+        supported |= (1u << (unsigned)AutoArm::prefetch_split);
     aei_auto.enable(supported);
     basalt::log::info("basalt serve", "AEI auto policy enabled, candidate mask 0x%x", supported);
     return true;
@@ -88,19 +91,21 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     const uint64_t total = g.n_layers > 0 && g.n_expert > 0
         ? (uint64_t)g.n_layers * (uint64_t)g.n_expert : 0;
     // Validate before deactivating the previous policy.
-    if (arm == AutoArm::cost || arm == AutoArm::split) {
+    if (arm == AutoArm::cost || arm == AutoArm::split ||
+        arm == AutoArm::prefetch_split) {
         if (g.n_layers <= 0 ||
             g.n_layers > (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers) {
             err = "AEI auto policy: too many layers for cost model";
             return false;
         }
     }
-    if ((arm == AutoArm::reuse || arm == AutoArm::prefetch) &&
+    if ((arm == AutoArm::reuse || arm == AutoArm::prefetch ||
+         arm == AutoArm::prefetch_split) &&
         (total == 0 || total > basalt::core::aei::NextExpertPrefetch::kMaxExperts)) {
         err = "AEI auto policy: expert geometry outside bounded index";
         return false;
     }
-    if (arm == AutoArm::split &&
+    if ((arm == AutoArm::split || arm == AutoArm::prefetch_split) &&
         !ver.aei_staged_split_available() && !ver_b.aei_staged_split_available()) {
         err = "AEI auto policy: no GPU staged-share engine";
         return false;
@@ -116,7 +121,8 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     ver_b.set_aei_predictive_prefetch(nullptr, 0);
     sp.set_aei_predictive_prefetch(nullptr);
     if (aei_split_costs &&
-        (!aei_auto.enabled() || aei_auto_applied == AutoArm::split)) {
+        (!aei_auto.enabled() || (aei_auto_applied == AutoArm::split ||
+          aei_auto_applied == AutoArm::prefetch_split))) {
         std::string ignored;
         if (ver.aei_staged_split_available() &&
             !ver.aei_update_staged_split(nullptr, true, ignored)) {
@@ -167,6 +173,17 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
             ver.set_aei_cost_placement_probe(aei_split_costs.get());
             ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
             break;
+        case AutoArm::prefetch_split:
+            if (!aei_prefetch)
+                aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
+            if (!aei_split_costs)
+                aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+            ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+            ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+            sp.set_aei_predictive_prefetch(aei_prefetch.get());
+            ver.set_aei_cost_placement_probe(aei_split_costs.get());
+            ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
+            break;
         default:
             err = "AEI auto policy: invalid policy";
             return false;
@@ -189,7 +206,11 @@ int Runtime::run_requests() {
         // Refit the device's CPU/staging split between completed requests,
         // never in the graph or inside the CPU pool callback. Updates are
         // rate limited to >=10% measured CPU cost movement.
-        if (flow == Flow::next && aei_split_costs && !batch_on() &&
+        if (flow == Flow::next && aei_split_costs &&
+            (!aei_auto.enabled() ||
+             aei_auto_applied == basalt::core::aei::AutoArm::split ||
+             aei_auto_applied == basalt::core::aei::AutoArm::prefetch_split) &&
+            !batch_on() &&
             !ba_job && (!piped || !pipe_inflight())) {
             const uint64_t current = aei_split_costs->reference_cost_ns((size_t)g.n_layers);
             const uint64_t previous = aei_split_last_cpu_ns;
