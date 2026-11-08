@@ -289,6 +289,10 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
         err = "AEI auto policy: execution still in flight";
         return false;
     }
+    if (arm >= AutoArm::count) {
+        err = "AEI auto policy: unsupported state transition";
+        return false;
+    }
     const uint64_t total = g.n_layers > 0 && g.n_expert > 0
         ? (uint64_t)g.n_layers * (uint64_t)g.n_expert : 0;
     // Validate before deactivating the previous policy.
