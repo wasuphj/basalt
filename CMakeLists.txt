@@ -349,6 +349,13 @@ endif()
 # streaming, GPU-independent trace policy comparison tool
 add_executable(aei-replay tools/aei_replay.cpp)
 target_include_directories(aei-replay PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# AEI CPU/GPU cost estimator, shadow-only and CPU-testable
+if(BUILD_TESTING)
+  add_executable(aei_scheduler_test tests/core/aei_scheduler_test.cpp)
+  target_include_directories(aei_scheduler_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_scheduler_test COMMAND aei_scheduler_test)
+  set_tests_properties(aei_scheduler_test PROPERTIES TIMEOUT 60)
+endif()
 # bounded CPU-only replay of expert cache policies
 if(BUILD_TESTING)
   add_executable(aei_replay_test tests/core/aei_replay_test.cpp)
