@@ -349,6 +349,13 @@ endif()
 # streaming, GPU-independent trace policy comparison tool
 add_executable(aei-replay tools/aei_replay.cpp)
 target_include_directories(aei-replay PRIVATE ${CMAKE_SOURCE_DIR}/include)
+# AEI verifier's opt-in host-visible Top-K capture helper
+if(BUILD_TESTING)
+  add_executable(aei_router_capture_test tests/core/aei_router_capture_test.cpp)
+  target_include_directories(aei_router_capture_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_router_capture_test COMMAND aei_router_capture_test)
+  set_tests_properties(aei_router_capture_test PROPERTIES TIMEOUT 60)
+endif()
 # AEI optional nonblocking bounded routing event collector
 if(BUILD_TESTING)
   add_executable(aei_event_buffer_test tests/core/aei_event_buffer_test.cpp)
