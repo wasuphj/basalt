@@ -20,6 +20,7 @@
 // Requires the default native decode configuration (native projections, fused GR, fused GDN, fast attention and
 // selection, native indexer) and a profile-filled VRAM expert tier with its residency table on the device.
 #pragma once
+#include "basalt/core/aei_router_capture.hpp"
 
 #include <functional>
 #include <cstdio>
@@ -115,6 +116,12 @@ public:
     Verifier(const Verifier&) = delete;
     Verifier& operator=(const Verifier&) = delete;
     void set_remote_expert_opt(RemoteExpertOpt* opt) { remote_opt_ = opt; } // before init/capture
+    // Optional only: caller binds a fresh stream at a request boundary while idle.
+    // The device-planned MoE path is deliberately excluded until its full router
+    // decisions have a separately verified host-visible source.
+    void set_aei_router_trace(aei::RouterEventBuffer* sink, uint64_t stream) noexcept {
+        router_capture_.bind(sink, stream);
+    }
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
     /// The peer expert tier the window drives itself (persistent kernel, mapped rings) instead of the pool launching it
@@ -396,6 +403,7 @@ public:
 private:
     struct WindowRecorder;
     RemoteExpertOpt* remote_opt_ = nullptr;
+    aei::VerifierRouterCapture router_capture_{};
     bool main_high_ = false;
     PeerExperts* peer_ = nullptr;
     std::vector<PeerExperts*> xpeers_;
