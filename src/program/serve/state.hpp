@@ -595,6 +595,7 @@ private:
     // Safe for idle PROBE off and QUIT/EOF paths; joins writer before deleting ring.
     void stop_aei_trace();
     bool aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err);
+    bool aei_enable_automatic(std::string& err);
     void aei_record_auto_request(int64_t generated, double decode_ms, bool healthy);
     int shutdown();
 };
