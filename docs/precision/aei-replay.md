@@ -95,8 +95,9 @@ GPU doorbell, the verifier copies its already mapped host-side Top-K IDs
 into the bounded in-memory event collector without file I/O or a new
 device transfer. Invalid IDs and full-buffer drops advance the sequence
 and therefore produce detectable gaps. A downstream worker must drain
-and persist events; such a worker and the caller that enables capture
-are **not integrated yet**. There is no production-enabled tracing flag.
+and persist events. An opt-in control is now provided through the
+engine's existing idle-only probe protocol. There is still no background
+persistence worker or production-enabled tracing flag.
 
 This seam does **not** capture the device-planned MoE ring: its host IDs
 cannot yet be certified as the complete original routing decisions.
@@ -104,3 +105,24 @@ It also does not cover prompt prefill routing. Neither source should be
 filled in from frequency histograms. The sink must be bound only when
 the verifier is idle; the request stream ID must not be reused across
 different requests, and each verifier's stream must remain unique.
+
+## Interactive observation control
+
+At an idle Basalt engine command boundary, `PROBE trace on` allocates
+one bounded 4096-event host buffer. Each subsequently decoded request
+binds distinct stream IDs to its two verifier chains. `PROBE trace
+drain` emits at most 128 records as `AEI stream sequence layer expert`
+followed by a summary showing overflow and contention drop counters.
+Run drain repeatedly to consume a larger buffer. `PROBE trace off`
+unbinds both verifiers and discards any unconsumed records. These
+commands are experimental and remain inaccessible from the regular
+HTTP inference API unless the corresponding engine protocol is exposed
+by its host.
+
+The ring has no disk I/O on the decode path; drain is a separate
+idle command. A 4096-entry buffer can overflow quickly when a model
+selects many experts per token. Gaps are visible through the event
+sequence or drop counters. No synthetic replacement events should be
+used in prediction accuracy calculations. This currently covers
+host-visible non-device-planned verify windows only. The default
+execution path does not allocate the buffer or activate the hook.
