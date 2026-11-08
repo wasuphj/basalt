@@ -15,5 +15,10 @@ int main() {
     CHECK(gpu_fast.staged[32] > gpu_slow.staged[32]);
     const auto limited = plan_staged_split(250000, 10000, 2, 1);
     CHECK(limited.staged[128] <= 2);
+    const auto no_gpu_samples = plan_staged_split(250000,10000,16,1,0);
+    const auto expensive_gpu = plan_staged_split(250000,10000,16,1,400000);
+    CHECK(expensive_gpu.staged[32] < no_gpu_samples.staged[32]);
+    const auto cheap_gpu = plan_staged_split(250000,10000,16,1,1000);
+    CHECK(cheap_gpu.staged[32] >= expensive_gpu.staged[32]);
     std::puts("aei_split_plan_test: OK");
 }
