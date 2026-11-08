@@ -24,14 +24,19 @@ inline constexpr const char* auto_arm_name(AutoArm arm) noexcept {
 
 class AutoPolicyController {
 public:
-    static constexpr uint32_t kExploreSamples = 4;
+    static constexpr uint32_t kExploreSamples = 12;
+    static constexpr uint32_t kMinBucketSamples = 4;
     static constexpr uint32_t kReevaluateAfter = 96;
     static constexpr double kMinRelativeGain = 0.08;
     static constexpr size_t kArms = static_cast<size_t>(AutoArm::count);
     static constexpr size_t kBuckets = 3;
-    void enable() noexcept {
+    void enable(uint32_t supported_arms = (1u << kArms) - 1) noexcept {
         clear();
+        supported_ = supported_arms | 1u; // baseline always available
         phase_ = AutoPhase::explore;
+    }
+    bool supports(AutoArm arm) const noexcept {
+        return ((supported_ >> static_cast<uint8_t>(arm)) & 1u) != 0;
     }
     void disable() noexcept { clear(); }
     bool enabled() const noexcept { return phase_ != AutoPhase::disabled; }
@@ -81,7 +86,8 @@ public:
         if (phase_ == AutoPhase::explore) {
             if (++segment_samples_ >= kExploreSamples) {
                 segment_samples_ = 0;
-                const size_t next = static_cast<size_t>(active_) + 1;
+                size_t next = static_cast<size_t>(active_) + 1;
+                while (next < kArms && !supports(static_cast<AutoArm>(next))) ++next;
                 if (next < kArms) {
                     set_active(static_cast<AutoArm>(next));
                 } else {
@@ -120,6 +126,7 @@ private:
     uint32_t segment_samples_ = 0;
     uint32_t exploit_samples_ = 0;
     uint32_t cooldown_left_ = 0;
+    uint32_t supported_ = (1u << kArms) - 1;
 
     void set_active(AutoArm policy) noexcept {
         if (active_ != policy) { active_ = policy; ++transitions_; }
@@ -140,10 +147,11 @@ private:
         // Select only arms with >=4 apples-to-apples observations against
         // baseline in a common decode-length bucket.
         for (size_t a = 1; a < kArms; ++a) {
+            if (!supports(static_cast<AutoArm>(a))) continue;
             for (size_t b = 0; b < kBuckets; ++b) {
                 const auto& base = sample_[0][b];
                 const auto& candidate = sample_[a][b];
-                if (base.count < kExploreSamples || candidate.count < kExploreSamples ||
+                if (base.count < kMinBucketSamples || candidate.count < kMinBucketSamples ||
                     !(base.mean > 0.0) || !(candidate.mean > 0.0)) continue;
                 const double gain = 1.0 - candidate.mean / base.mean;
                 if (gain >= best_gain) { best_gain = gain; best = static_cast<AutoArm>(a); }
