@@ -21,15 +21,40 @@ int run(Context& context) {
     return runtime.execute();
 }
 
+void Runtime::stop_aei_trace() {
+    ver.set_aei_router_trace(nullptr, 0);
+    ver_b.set_aei_router_trace(nullptr, 0);
+    // A live writer owns the ring: always drain, flush and join first.
+    if (aei_trace_writer) {
+        aei_trace_writer->stop();
+        const uint64_t overflow = aei_trace ? aei_trace->dropped_capacity() : UINT64_MAX;
+        const uint64_t contention = aei_trace ? aei_trace->dropped_contention() : UINT64_MAX;
+        const uint64_t io_errors = aei_trace_writer->io_errors();
+        const bool complete = overflow == 0 && contention == 0 && io_errors == 0;
+        std::printf("PROBE trace file end written=%llu dropped_capacity=%llu dropped_contention=%llu io_errors=%llu complete=%d\n",
+                    (unsigned long long)aei_trace_writer->written(),
+                    (unsigned long long)overflow, (unsigned long long)contention,
+                    (unsigned long long)io_errors, complete ? 1 : 0);
+        std::fflush(stdout);
+        aei_trace_writer.reset();
+    }
+    aei_trace.reset();
+}
+
 int Runtime::run_requests() {
     for (;;) {
         const Flow flow = dispatch();
-        if (flow == Flow::error) return 1;
+        if (flow == Flow::error) {
+            stop_aei_trace();
+            return 1;
+        }
         if (flow == Flow::quit) return shutdown();
     }
 }
 
 int Runtime::shutdown() {
+    // Final trace receipt must be emitted even on QUIT or stdin EOF.
+    stop_aei_trace();
     // the conversations this process holds go to the disk tier before it ends
     if (disk.enabled()) {
         const auto t0 = Clock::now();
