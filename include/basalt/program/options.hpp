@@ -36,6 +36,7 @@ struct CommonOptions {
     /// not hold that the expert profile ranks hottest are copied into RAM, the rest are read from the files in place
     /// (the GGUF shards when the model file has no experts section).  0 = the whole complement (--resident-experts).
     uint64_t resident_budget = 0;
+    uint64_t host_pool_bytes = 0;   ///< Fixed, prefaulted backing for host data buffers; 0 keeps the normal allocator.
     /// Slots of VRAM-resident experts.  **0 = off, and off is the default.**  Switching the cache on moves work off the
     /// CPU pool (the model's hit kernel).
     int expert_cache = 0;
