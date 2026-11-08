@@ -9,7 +9,7 @@
 
 namespace basalt::core::aei {
 
-enum class AutoArm : uint8_t { baseline, cost, reuse, prefetch, split, count };
+enum class AutoArm : uint8_t { baseline, cost, reuse, prefetch, split, prefetch_split, count };
 enum class AutoPhase : uint8_t { disabled, explore, exploit, audit, cooldown };
 inline constexpr const char* auto_arm_name(AutoArm arm) noexcept {
     switch (arm) {
@@ -18,6 +18,7 @@ inline constexpr const char* auto_arm_name(AutoArm arm) noexcept {
         case AutoArm::reuse: return "reuse";
         case AutoArm::prefetch: return "prefetch";
         case AutoArm::split: return "split";
+        case AutoArm::prefetch_split: return "prefetch+split";
         default: return "invalid";
     }
 }
