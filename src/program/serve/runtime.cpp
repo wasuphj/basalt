@@ -43,13 +43,103 @@ void Runtime::stop_aei_trace() {
     aei_trace.reset();
 }
 
+bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err) {
+    using basalt::core::aei::AutoArm;
+    if (batch_on() || (piped && pipe_inflight()) || ba_job) {
+        err = "AEI auto policy: execution still in flight";
+        return false;
+    }
+    const uint64_t total = g.n_layers > 0 && g.n_expert > 0
+        ? (uint64_t)g.n_layers * (uint64_t)g.n_expert : 0;
+    // Validate before deactivating the previous policy.
+    if (arm == AutoArm::cost || arm == AutoArm::split) {
+        if (g.n_layers <= 0 ||
+            g.n_layers > (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers) {
+            err = "AEI auto policy: too many layers for cost model";
+            return false;
+        }
+    }
+    if ((arm == AutoArm::reuse || arm == AutoArm::prefetch) &&
+        (total == 0 || total > basalt::core::aei::NextExpertPrefetch::kMaxExperts)) {
+        err = "AEI auto policy: expert geometry outside bounded index";
+        return false;
+    }
+    if (arm == AutoArm::split &&
+        !ver.aei_staged_split_available() && !ver_b.aei_staged_split_available()) {
+        err = "AEI auto policy: no GPU staged-share engine";
+        return false;
+    }
+
+    // All changes are allowed only at idle request boundaries. Removing a
+    // callback's observer always precedes destroying its memory.
+    ver.set_aei_cost_placement_probe(nullptr);
+    ver_b.set_aei_cost_placement_probe(nullptr);
+    ver.set_aei_reuse_probe(nullptr, 0);
+    ver_b.set_aei_reuse_probe(nullptr, 0);
+    ver.set_aei_predictive_prefetch(nullptr, 0);
+    ver_b.set_aei_predictive_prefetch(nullptr, 0);
+    if (aei_split_costs) {
+        std::string ignored;
+        if (ver.aei_staged_split_available() &&
+            !ver.aei_update_staged_split(nullptr, true, ignored)) {
+            err = "AEI auto policy: cannot restore primary GPU split: " + ignored;
+            return false;
+        }
+        if (ver_b.aei_staged_split_available() &&
+            !ver_b.aei_update_staged_split(nullptr, true, ignored)) {
+            err = "AEI auto policy: cannot restore secondary GPU split: " + ignored;
+            return false;
+        }
+        aei_split_last_cpu_ns = 0;
+    }
+    aei_rank_costs.reset();
+    aei_reuse_index.reset();
+    aei_prefetch.reset();
+    aei_split_costs.reset();
+    switch (arm) {
+        case AutoArm::baseline: break;
+        case AutoArm::cost:
+            aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+            ver.set_aei_cost_placement_probe(aei_rank_costs.get());
+            ver_b.set_aei_cost_placement_probe(aei_rank_costs.get());
+            break;
+        case AutoArm::reuse:
+            aei_reuse_index = std::make_unique<basalt::core::aei::ExpertReuseIndex>((size_t)total);
+            ver.set_aei_reuse_probe(aei_reuse_index.get(), (uint32_t)g.n_expert);
+            ver_b.set_aei_reuse_probe(aei_reuse_index.get(), (uint32_t)g.n_expert);
+            break;
+        case AutoArm::prefetch:
+            aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
+            ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+            ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+            break;
+        case AutoArm::split:
+            aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+            ver.set_aei_cost_placement_probe(aei_split_costs.get());
+            ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
+            break;
+        default:
+            err = "AEI auto policy: invalid policy";
+            return false;
+    }
+    aei_auto_applied = arm;
+    basalt::log::info("basalt serve", "AEI auto policy: %s",
+                      basalt::core::aei::auto_arm_name(arm));
+    return true;
+}
+
+void Runtime::aei_record_auto_request(int64_t generated, double decode_ms, bool healthy) {
+    if (!aei_auto.enabled()) return;
+    (void)aei_auto.observe(generated, decode_ms, healthy);
+}
+
 int Runtime::run_requests() {
     for (;;) {
         const Flow flow = dispatch();
         // Refit the device's CPU/staging split between completed requests,
         // never in the graph or inside the CPU pool callback. Updates are
         // rate limited to >=10% measured CPU cost movement.
-        if (flow == Flow::proceed && aei_split_costs && !batch_on() &&
+        if (flow == Flow::next && aei_split_costs && !batch_on() &&
             !ba_job && (!piped || !pipe_inflight())) {
             const uint64_t current = aei_split_costs->reference_cost_ns((size_t)g.n_layers);
             const uint64_t previous = aei_split_last_cpu_ns;
