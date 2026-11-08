@@ -108,10 +108,10 @@ private:
             case Policy::least_stale: {
                 // Next-use heuristic from EWMA reuse interval (not SpecMD's exact policy).
                 const uint64_t age = now - c.last;
-                const uint64_t remaining = c.interval > age ? c.interval - age : 0;
-                // Higher priority means the expert is expected sooner.
-                // The eviction loop removes the lowest priority, thus the
-                // expert with the farthest predicted reuse is displaced.
+                // Unknown or overdue reuse is a low-priority resident.
+                // Among not-yet-due experts, keep those due sooner.
+                if (c.interval == 0 || age >= c.interval) return 0;
+                const uint64_t remaining = c.interval - age;
                 return std::numeric_limits<uint64_t>::max() - remaining;
             }
         }
