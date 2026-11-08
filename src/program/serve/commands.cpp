@@ -281,9 +281,12 @@ Flow Runtime::dispatch() {
                             (unsigned long long)ver.aei_staged_gpu_ns(),
                             (unsigned long long)ver_b.aei_staged_gpu_ns());
             } else if (aei_prefetch) {
-                std::printf("PROBE policy prefetch metadata_bytes=%zu dropped_samples=%llu\n",
+                std::printf("PROBE policy prefetch metadata_bytes=%zu dropped_samples=%llu evaluated=%llu correct=%llu hit_ema_pct=%u\n",
                             aei_prefetch->metadata_bytes(),
-                            (unsigned long long)aei_prefetch->dropped_samples());
+                            (unsigned long long)aei_prefetch->dropped_samples(),
+                            (unsigned long long)aei_prefetch->evaluated(),
+                            (unsigned long long)aei_prefetch->correct(),
+                            aei_prefetch->hit_ema_percent());
             } else if (aei_reuse_index) {
                 std::printf("PROBE policy reuse metadata_bytes=%zu\n", aei_reuse_index->metadata_bytes());
             } else if (!aei_rank_costs) perr = "PROBE policy: baseline";

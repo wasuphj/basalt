@@ -28,5 +28,16 @@ int main() {
     CHECK(restored.boost(3) > 0.0f);
     CHECK(!restored.restore_checkpoint(snapshot.substr(0, snapshot.size()-1)));
     CHECK(!restored.restore_checkpoint(std::string(snapshot.size(), '\0')));
+    NextExpertPrefetch unpredictable(64);
+    // Train one source with a uniformly distributed successor set.
+    // The posterior top-two is too uncertain for proactive hints.
+    for (int pass = 0; pass < 100; ++pass)
+        for (uint32_t target = 10; target < 18; ++target)
+            unpredictable.observe(2, target);
+    CHECK(unpredictable.evaluated() >= 128);
+    CHECK(unpredictable.correct() < unpredictable.evaluated());
+    CHECK(unpredictable.hit_ema_percent() <= 100);
+    CHECK(p.evaluated() > 0);
+    CHECK(p.correct() > 0);
     std::puts("aei_next_prefetch_test: OK");
 }
