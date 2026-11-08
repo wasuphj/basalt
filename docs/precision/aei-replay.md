@@ -440,3 +440,13 @@ Every policy transition occurs **between requests**, before entering
 the next Request execution; no switch happens during the verifier or
 a CUDA graph. The opt-in feature is OFF by default and preserves the
 original scheduler for ordinary launches.
+
+## Automatic startup (no interactive PROBE required)
+
+Start persistent inference with `--serve --aei-auto` to initialize the
+AEI FSM automatically after all server GPU caches, Verifier chains and
+batch/pipeline resources have been built. This is the same implementation
+used by `PROBE policy auto on`, not a separate tuning system.
+The default remains OFF, and non-server generation rejects the option.
+Request-boundary decisions, experiment isolation and baseline fallback
+are otherwise identical to the interactive mode.

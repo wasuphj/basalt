@@ -14,6 +14,12 @@ int Runtime::execute() {
     if (const int code = init_memory()) return code;
     if (const int code = capture_windows()) return code;
     if (const int code = init_batch()) return code;
+    if (o.aei_auto) {
+        std::string auto_error;
+        if (!aei_enable_automatic(auto_error))
+            basalt::log::warn("basalt serve", "AEI auto startup unavailable: %s",
+                              auto_error.c_str());
+    }
     return run_requests();
 }
 
@@ -41,6 +47,33 @@ void Runtime::stop_aei_trace() {
         aei_trace_writer.reset();
     }
     aei_trace.reset();
+}
+
+bool Runtime::aei_enable_automatic(std::string& err) {
+    if (!aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, err))
+        return false;
+    using basalt::core::aei::AutoArm;
+    uint32_t supported = 1u << (unsigned)AutoArm::baseline;
+    const uint64_t total = g.n_layers > 0 && g.n_expert > 0
+        ? (uint64_t)g.n_layers * (uint64_t)g.n_expert : 0;
+    const bool rank_ready = o.adapt_swaps > 0 && !host_res.empty() &&
+                            !drive.d.usage.empty();
+    if (rank_ready && xq_across &&
+        g.n_layers <= (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers)
+        supported |= (1u << (unsigned)AutoArm::cost);
+    if (rank_ready && xq_across && total > 0 &&
+        total <= basalt::core::aei::ExpertReuseIndex::kMaximumExperts)
+        supported |= (1u << (unsigned)AutoArm::reuse);
+    if (rank_ready && total > 0 &&
+        total <= basalt::core::aei::NextExpertPrefetch::kMaxExperts)
+        supported |= (1u << (unsigned)AutoArm::prefetch);
+    if (g.n_layers > 0 &&
+        g.n_layers <= (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers &&
+        (ver.aei_staged_split_available() || ver_b.aei_staged_split_available()))
+        supported |= (1u << (unsigned)AutoArm::split);
+    aei_auto.enable(supported);
+    basalt::log::info("basalt serve", "AEI auto policy enabled, candidate mask 0x%x", supported);
+    return true;
 }
 
 bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err) {

@@ -24,6 +24,10 @@ std::string profile_key(const basalt::core::Json& meta) {
 }
 
 std::optional<int> resolve_model_options(Options& o, bool multi_gpu) {
+    if (o.aei_auto && !o.serve) {
+        basalt::log::error("basalt generate", "--aei-auto requires --serve");
+        return 2;
+    }
     // Built-in defaults for what is given nowhere: the fastest settings that need no knowledge of the machine.
     // Speculation needs the pack's drafter; prompt chunks are sized from what the expert cache can lend; the experts
     // the GPU does not hold go to page-locked RAM when they fit (a plain file mapping when not); the adaptive tier
