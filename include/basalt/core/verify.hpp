@@ -134,6 +134,9 @@ public:
     void set_aei_reuse_probe(aei::ExpertReuseIndex* observer, uint32_t n_expert) noexcept {
         router_capture_.set_reuse_index(observer, n_expert);
     }
+    void set_aei_predictive_prefetch(aei::NextExpertPrefetch* predictor, uint32_t n_expert) noexcept {
+        router_capture_.set_prefetch_index(predictor, n_expert);
+    }
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
     /// The peer expert tier the window drives itself (persistent kernel, mapped rings) instead of the pool launching it

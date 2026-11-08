@@ -79,7 +79,29 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line == "PROBE policy reuse on") {
+        if (line == "PROBE policy prefetch on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                const uint64_t total = (uint64_t)g.n_layers * (uint64_t)g.n_expert;
+                if (!total || total > basalt::core::aei::NextExpertPrefetch::kMaxExperts) {
+                    perr = "PROBE policy: model geometry exceeds bounded predictor";
+                } else {
+                    ver.set_aei_cost_placement_probe(nullptr);
+                    ver_b.set_aei_cost_placement_probe(nullptr);
+                    aei_rank_costs.reset();
+                    ver.set_aei_reuse_probe(nullptr, 0);
+                    ver_b.set_aei_reuse_probe(nullptr, 0);
+                    aei_reuse_index.reset();
+                    if (!aei_prefetch)
+                        aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
+                    ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+                    ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+                    std::printf("PROBE policy prefetch on metadata_bytes=%zu\n",
+                                aei_prefetch->metadata_bytes());
+                }
+            }
+        } else if (line == "PROBE policy reuse on") {
             if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -87,6 +109,9 @@ Flow Runtime::dispatch() {
                 if (!total || total > basalt::core::aei::ExpertReuseIndex::kMaximumExperts)
                     perr = "PROBE policy: model geometry exceeds bounded reuse index";
                 else {
+                    ver.set_aei_predictive_prefetch(nullptr, 0);
+                    ver_b.set_aei_predictive_prefetch(nullptr, 0);
+                    aei_prefetch.reset();
                     // Policy choices are mutually exclusive; keep an unambiguous A/B.
                     ver.set_aei_cost_placement_probe(nullptr);
                     ver_b.set_aei_cost_placement_probe(nullptr);
@@ -109,6 +134,9 @@ Flow Runtime::dispatch() {
                     ver.set_aei_reuse_probe(nullptr, 0);
                     ver_b.set_aei_reuse_probe(nullptr, 0);
                     aei_reuse_index.reset();
+                    ver.set_aei_predictive_prefetch(nullptr, 0);
+                    ver_b.set_aei_predictive_prefetch(nullptr, 0);
+                    aei_prefetch.reset();
                     if (!aei_rank_costs)
                         aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
                     ver.set_aei_cost_placement_probe(aei_rank_costs.get());
@@ -127,10 +155,19 @@ Flow Runtime::dispatch() {
                 ver.set_aei_reuse_probe(nullptr, 0);
                 ver_b.set_aei_reuse_probe(nullptr, 0);
                 aei_reuse_index.reset();
+                ver.set_aei_predictive_prefetch(nullptr, 0);
+                ver_b.set_aei_predictive_prefetch(nullptr, 0);
+                aei_prefetch.reset();
                 std::printf("PROBE policy baseline\n");
             }
         } else if (line == "PROBE policy stats") {
-            if (!aei_rank_costs) perr = "PROBE policy: baseline";
+            if (aei_prefetch) {
+                std::printf("PROBE policy prefetch metadata_bytes=%zu dropped_samples=%llu\n",
+                            aei_prefetch->metadata_bytes(),
+                            (unsigned long long)aei_prefetch->dropped_samples());
+            } else if (aei_reuse_index) {
+                std::printf("PROBE policy reuse metadata_bytes=%zu\n", aei_reuse_index->metadata_bytes());
+            } else if (!aei_rank_costs) perr = "PROBE policy: baseline";
             else {
                 std::printf("PROBE policy cost reference_ns=%llu\n",
                     (unsigned long long)aei_rank_costs->reference_cost_ns((size_t)g.n_layers));

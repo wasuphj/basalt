@@ -15,7 +15,7 @@ Flow Request::decode() {
     if (runtime_.mtp_on && !runtime_.mtp.use_main(runtime_.err)) { std::printf("ERR %s\n", runtime_.err.c_str()); return Flow::error; }   // the windows between prompt chunks swapped it
     // Bind each verifier chain to a distinct request stream. A fresh stream
     // prevents transitions from crossing request boundaries or MTP chains.
-    if (runtime_.aei_trace) {
+    if (runtime_.aei_trace || runtime_.aei_prefetch) {
         const uint64_t base = runtime_.aei_trace_next_stream;
         if (base > UINT64_MAX - 2) {
             runtime_.ver.set_aei_router_trace(nullptr, 0);
