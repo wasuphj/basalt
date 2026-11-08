@@ -411,6 +411,13 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME aei_transitions_test COMMAND aei_transitions_test)
   set_tests_properties(aei_transitions_test PROPERTIES TIMEOUT 60)
 endif()
+# Automatic AEI policy FSM is deterministic and CUDA-independent
+if(BUILD_TESTING)
+  add_executable(aei_auto_policy_test tests/core/aei_auto_policy_test.cpp)
+  target_include_directories(aei_auto_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_auto_policy_test COMMAND aei_auto_policy_test)
+  set_tests_properties(aei_auto_policy_test PROPERTIES TIMEOUT 60)
+endif()
 # Adaptive CPU/GPU staged-sharing plan, CPU-only arithmetic
 if(BUILD_TESTING)
   add_executable(aei_split_plan_test tests/core/aei_split_plan_test.cpp)

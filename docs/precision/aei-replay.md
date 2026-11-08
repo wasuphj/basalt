@@ -407,3 +407,36 @@ accelerated `xq_round()` path. Sources already resident in RAM may
 ignore these hints. The predictor never requests extra GPU slots or
 changes weight data, and the hint is inactive unless
 `PROBE policy prefetch on` was explicitly enabled.
+
+## Automatic request-boundary AEI policy controller
+
+`PROBE policy auto on` enables a deterministic, fixed-memory
+explore/exploit state machine. The baseline is measured first, followed
+by applicable experimental policies: cross-layer CPU cost placement,
+reuse-aware placement, sparse next-expert Prefetch, and measured
+CPU/GPU staged split. Modes not applicable to the current cache layout,
+GPU staging or model size are skipped; the engine remains on baseline
+if there are no available alternatives.
+
+Each arm collects twelve eligible completed decode requests; only
+healthy completions with 32 or more generated tokens and a finite,
+positive decode time are used. The selector compares mean milliseconds
+per generated token against baseline **within matching generated-token
+length buckets**. It promotes an arm only with at least four samples
+in a comparable bucket and at least 8% lower observed latency per
+token. Otherwise the original policy wins. After 96 exploitation
+samples, it restarts exploration to adapt to changing traffic.
+Execution failure or nonfinite latency enters an eight-request
+baseline cooldown before another exploration cycle. These boundaries
+are initial product heuristics, not guarantees of statistical
+significance; highly heterogeneous prompts can bias comparisons.
+
+`PROBE policy auto stats` reports the FSM's current phase, intended
+and applied policy, sample count, rejected samples, and transition
+count. `PROBE policy auto off` restores the baseline policy and
+detaches all auto-managed observers. Explicit manual policy commands
+are rejected while auto owns the policy, avoiding competing writers.
+Every policy transition occurs **between requests**, before entering
+the next Request execution; no switch happens during the verifier or
+a CUDA graph. The opt-in feature is OFF by default and preserves the
+original scheduler for ordinary launches.
