@@ -1,4 +1,5 @@
 #include "context.hpp"
+#include "basalt/platform/aei_profile_binding.hpp"
 
 namespace basalt::program::generate {
 
@@ -153,8 +154,15 @@ int model(Context& context) {
             uint64_t bytes = 0;
             std::string perr;
             if (basalt::platform::file_size(o.expert_profile_save, bytes) && bytes > 0) {
-                if (basalt::core::read_expert_profile(basalt::core::FileRange(o.expert_profile_save), g.n_layers,
-                                                      g.n_expert, profile, pslots, perr)) {
+                const std::string identity = context.model_file
+                    ? context.model_file->expert_profile_identity() : std::string{};
+                if (!basalt::platform::aei_profile_identity_matches(o.expert_profile_save, identity)) {
+                    basalt::log::warn("basalt generate",
+                        "%s has no matching model identity: using the model's embedded profile",
+                        o.expert_profile_save.c_str());
+                } else if (basalt::core::read_expert_profile(
+                               basalt::core::FileRange(o.expert_profile_save), g.n_layers,
+                               g.n_expert, profile, pslots, perr)) {
                     learned = true;
                     o.expert_profile = o.expert_profile_save;
                 } else {
