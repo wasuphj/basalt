@@ -1,7 +1,11 @@
 import csv
 import io
 import unittest
-from tools.aei_trace_to_csv import convert
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aei_trace_to_csv import convert
 
 
 class TraceConversionTest(unittest.TestCase):
