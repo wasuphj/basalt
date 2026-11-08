@@ -1,11 +1,14 @@
 import csv
 import io
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from aei_trace_to_csv import convert
+from aei_trace_to_csv import convert, main
 
 
 class TraceConversionTest(unittest.TestCase):
@@ -49,6 +52,31 @@ PROBE trace end count=1 dropped_capacity=1 dropped_contention=0
         trace = "PROBE trace end count=0 dropped_capacity=4 dropped_contention=0\nPROBE trace end count=0 dropped_capacity=2 dropped_contention=0\n"
         with self.assertRaisesRegex(ValueError, "counter reset"):
             self.parse(trace)
+
+    def test_atomic_output_preserves_existing_file_on_loss(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "events.csv"
+            output.write_text("previous verified result", encoding="utf-8")
+            trace = ("AEI 1 0 0 2\n"
+                     "PROBE trace end count=1 dropped_capacity=1 dropped_contention=0\n")
+            with patch("sys.stdin", io.StringIO(trace)):
+                code = main(["--require-lossless", "--output", str(output)])
+            self.assertEqual(code, 2)
+            self.assertEqual(output.read_text(encoding="utf-8"),
+                             "previous verified result")
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["events.csv"])
+
+    def test_atomic_output_publishes_validated_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "events.csv"
+            trace = ("AEI 5 0 2 3\n"
+                     "PROBE trace end count=1 dropped_capacity=0 dropped_contention=0\n")
+            with patch("sys.stdin", io.StringIO(trace)):
+                code = main(["--require-lossless", "--output", str(output)])
+            self.assertEqual(code, 0)
+            self.assertEqual(output.read_text(encoding="utf-8"),
+                             "stream,sequence,layer,expert\n5,0,2,3\n")
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["events.csv"])
 
 
 if __name__ == "__main__":
