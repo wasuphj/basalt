@@ -126,3 +126,29 @@ sequence or drop counters. No synthetic replacement events should be
 used in prediction accuracy calculations. This currently covers
 host-visible non-device-planned verify windows only. The default
 execution path does not allocate the buffer or activate the hook.
+
+## From live diagnostics to the shadow evaluator
+
+Capture the diagnostic output of `PROBE trace drain` in a log. Convert
+the ordered records (other engine log lines are ignored) with:
+
+```sh
+python tools/aei_trace_to_csv.py --require-lossless < engine-trace.log > ordered.csv
+bin/aei-shadow 512 48 ordered.csv
+```
+
+The model geometry shown is an example. The converter rejects malformed
+events, duplicate or regressing per-stream sequence values, inconsistent
+drain counts, counter resets, and any observed loss if
+`--require-lossless` is selected. It validates at most 65,536 distinct
+stream cursors and consumes input incrementally. Check exit status
+**before** using `ordered.csv`: shell redirection may leave an incomplete
+file on validation failure. Input should cover the full tracing session,
+including drain summaries. After `trace off`, start a new conversion
+session because loss counters reset with a newly allocated buffer.
+
+An event gap from a dropped or invalid ID also remains detectable by
+the downstream shadow evaluator's sequence checks. Since verifier
+windows can include rejected speculative drafts, these measurements
+describe executed router activity, **not** necessarily accepted output
+tokens. They are not production wall-clock performance evidence.
