@@ -2,7 +2,7 @@
 # Compile and run every AEI host-only regression without CUDA or an engine binary.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-compiler="\${CXX:-g++}"
+compiler="${CXX:-g++}"
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
@@ -16,7 +16,7 @@ for test_src in tests/core/aei_*_test.cpp; do
     extra=(src/platform/aei_trace_writer.cpp src/platform/file.cpp)
   fi
   echo "AEI CPU compile: $name"
-  "$compiler" "\${common[@]}" "$test_src" "\${extra[@]}" -o "$out/$name"
+  "$compiler" "${common[@]}" "$test_src" "${extra[@]}" -o "$out/$name"
   echo "AEI CPU run: $name"
   "$out/$name"
   count=$((count+1))
