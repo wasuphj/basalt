@@ -56,5 +56,29 @@ int main() {
     for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
         pp_guard.observe(128, 850.0, true, 128, 990.0);
     CHECK(pp_guard.active() == AutoArm::prefetch);
+    AutoPolicyController audit;
+    audit.enable(allowed);
+    for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
+        audit.observe(128, 1280.0, true);
+    for (uint32_t i = 0; i < AutoPolicyController::kExploreSamples; ++i)
+        audit.observe(128, 850.0, true);
+    CHECK(audit.active() == AutoArm::prefetch);
+    for (uint32_t i = 0; i < AutoPolicyController::kAuditEvery; ++i)
+        audit.observe(128, 850.0, true);
+    CHECK(audit.phase() == AutoPhase::audit);
+    CHECK(audit.active() == AutoArm::baseline);
+    for (uint32_t i = 0; i < AutoPolicyController::kAuditSamples; ++i)
+        audit.observe(128, 1280.0, true);
+    CHECK(audit.phase() == AutoPhase::exploit);
+    CHECK(audit.active() == AutoArm::prefetch);
+    CHECK(audit.audits() == 1);
+    for (uint32_t i = 0; i < AutoPolicyController::kAuditEvery; ++i)
+        audit.observe(128, 850.0, true);
+    CHECK(audit.phase() == AutoPhase::audit);
+    for (uint32_t i = 0; i < AutoPolicyController::kAuditSamples; ++i)
+        audit.observe(128, 700.0, true); // baseline now wins
+    CHECK(audit.phase() == AutoPhase::cooldown);
+    CHECK(audit.active() == AutoArm::baseline);
+    CHECK(audit.audits() == 2);
     std::puts("aei_auto_policy_test: OK");
 }
