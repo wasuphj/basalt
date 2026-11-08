@@ -212,6 +212,7 @@ private:
     std::unique_ptr<basalt::core::aei::ShadowScheduler> aei_cpu_costs{};
     std::unique_ptr<basalt::core::aei::LayerCostRank> aei_rank_costs{};
     std::unique_ptr<basalt::core::aei::ExpertReuseIndex> aei_reuse_index{};
+    std::unique_ptr<basalt::core::aei::NextExpertPrefetch> aei_prefetch{};
     std::unique_ptr<basalt::platform::AeiTraceWriter> aei_trace_writer{};
     uint64_t aei_trace_next_stream = 1;
     basalt::core::Verifier ver{};
