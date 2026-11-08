@@ -411,6 +411,13 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME aei_transitions_test COMMAND aei_transitions_test)
   set_tests_properties(aei_transitions_test PROPERTIES TIMEOUT 60)
 endif()
+# Adaptive CPU/GPU staged-sharing plan, CPU-only arithmetic
+if(BUILD_TESTING)
+  add_executable(aei_split_plan_test tests/core/aei_split_plan_test.cpp)
+  target_include_directories(aei_split_plan_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+  basalt_cpu_test(NAME aei_split_plan_test COMMAND aei_split_plan_test)
+  set_tests_properties(aei_split_plan_test PROPERTIES TIMEOUT 60)
+endif()
 # Live predictor is a host-only bounded primitive, with no CUDA dependency
 if(BUILD_TESTING)
   add_executable(aei_next_prefetch_test tests/core/aei_next_prefetch_test.cpp)
