@@ -66,13 +66,13 @@ public:
         out.imbue(std::locale::classic());
         out << std::setprecision(std::numeric_limits<double>::max_digits10);
         out << "AEI-AUTO-1\n" << supported_ << ' ' << completed_
-            << ' ' << rejected_ << ' ' << transitions_ << ' ' << audits_ << '\\n';
+            << ' ' << rejected_ << ' ' << transitions_ << ' ' << audits_ << '\n';
         for (size_t a = 0; a < kArms; ++a)
             for (size_t b = 0; b < kBuckets; ++b) {
                 const auto& tg = sample_[a][b];
                 const auto& pp = prefill_[a][b];
                 out << tg.count << ' ' << tg.mean << ' '
-                    << pp.count << ' ' << pp.mean << '\\n';
+                    << pp.count << ' ' << pp.mean << '\n';
             }
         return out.str();
     }
