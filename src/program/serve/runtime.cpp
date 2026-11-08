@@ -111,6 +111,7 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
     ver_b.set_aei_reuse_probe(nullptr, 0);
     ver.set_aei_predictive_prefetch(nullptr, 0);
     ver_b.set_aei_predictive_prefetch(nullptr, 0);
+    sp.set_aei_predictive_prefetch(nullptr);
     if (aei_split_costs) {
         std::string ignored;
         if (ver.aei_staged_split_available() &&
@@ -145,6 +146,7 @@ bool Runtime::aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string&
             aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
             ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
             ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+            sp.set_aei_predictive_prefetch(aei_prefetch.get());
             break;
         case AutoArm::split:
             aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
