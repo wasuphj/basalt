@@ -7,6 +7,7 @@
 #include "basalt/core/peer_experts.hpp"
 #include "basalt/kernels/iq_kernels.hpp"
 #include "basalt/kernels/dec_moe.hpp"
+#include <array>
 #include <vector>
 
 namespace basalt::core {
