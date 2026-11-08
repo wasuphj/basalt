@@ -1,5 +1,6 @@
 // src/program/serve/runtime.cpp - lifecycle of the persistent engine.
 #include "state.hpp"
+#include <algorithm>
 
 namespace basalt::program::serve {
 
