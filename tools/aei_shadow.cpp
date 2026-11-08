@@ -40,7 +40,8 @@ int main(int argc, char** argv) {
     }
     uint64_t experts = 0, layers = 0;
     if (!parse(argv[1], experts) || !parse(argv[2], layers) ||
-        experts == 0 || layers == 0 || experts * layers > (1u << 20)) {
+        experts == 0 || layers == 0 || experts > (1u << 20) ||
+        layers > (1u << 20) / experts) {
         std::cerr << "invalid model geometry\n";
         return 2;
     }
