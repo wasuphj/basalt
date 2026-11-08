@@ -215,6 +215,8 @@ void usage() {
                  "                       docs/running.md, Memory floors), plain mmap if it does not fit.  Same answers as --mmap-experts for the same placement.\n"
                  "                       The copy leaves --ram-reserve-mib free beside what the engine takes after it,\n"
                  "                       and the OS file cache's floor while some experts stay in the file.\n"
+                 "  --host-pool-gib N  prefault and pin one fixed pool for host data buffers; no growth outside it\n"
+                 "                       control objects, server processes and file cache are outside this data pool\n"
                  "  --resident-budget-gib N  the resident mode with at most N GiB of experts in RAM (hottest first;\n"
                  "                       auto when not set: what fits);\n"
                  "                       a budget that would leave less than the RAM floor free is refused, naming\n"
