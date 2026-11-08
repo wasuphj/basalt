@@ -49,6 +49,7 @@
 #include "basalt/kernels/mrope.hpp"
 #include "basalt/core/native_head.hpp"
 #include "basalt/core/verify.hpp"
+#include "basalt/core/aei_auto_policy.hpp"
 #include "basalt/core/mtp.hpp"
 #include "basalt/prefill/gemm.hpp"
 #include "basalt/prefill/prefill.hpp"
@@ -215,6 +216,8 @@ private:
     std::unique_ptr<basalt::core::aei::NextExpertPrefetch> aei_prefetch{};
     std::unique_ptr<basalt::core::aei::LayerCostRank> aei_split_costs{};
     uint64_t aei_split_last_cpu_ns = 0;
+    basalt::core::aei::AutoPolicyController aei_auto{};
+    basalt::core::aei::AutoArm aei_auto_applied = basalt::core::aei::AutoArm::baseline;
     std::unique_ptr<basalt::platform::AeiTraceWriter> aei_trace_writer{};
     uint64_t aei_trace_next_stream = 1;
     basalt::core::Verifier ver{};
@@ -591,6 +594,8 @@ private:
     Flow dispatch();
     // Safe for idle PROBE off and QUIT/EOF paths; joins writer before deleting ring.
     void stop_aei_trace();
+    bool aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err);
+    void aei_record_auto_request(int64_t generated, double decode_ms, bool healthy);
     int shutdown();
 };
 
