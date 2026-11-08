@@ -524,3 +524,22 @@ calculation. These checks detect accidental partial updates and
 cross-model profile reuse. They do not authenticate a maliciously
 rewritten pair of files or make the pair a single filesystem
 transaction.
+
+## Composable Prefetch + CPU/GPU Split mode
+
+Automatic mode can now explore a sixth arm, `prefetch+split`, only
+when both original Expert cache admission and Device-planned MoE staged
+sharing are available. It combines the predictive source read-ahead
+and VRAM cache promotion with the separately measured CPU/staged-GPU
+miss-sharing lookup. This avoids forcing mutually independent
+capabilities into one artificial choice.
+
+The same request-boundary policy FSM selects or rejects the combined
+arm using comparable TG and PP latency observations. Switching away
+detaches both observer contracts and restores the original GPU stage
+table; re-entering while auto is still enabled retains their bounded
+learned models. Crucially, a retained split-cost observer **does not**
+trigger GPU lookup refresh when the selected policy is something else:
+only active `split` and `prefetch+split` arms may update the device
+stage table. Manual policy modes remain unchanged and opt-in auto is
+still disabled by default.
