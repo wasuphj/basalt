@@ -1,7 +1,7 @@
 //! Loopback-only API sidecar. Basalt's existing HTTP handler authenticates and forwards
 //! thread calls; this process has a separate mandatory shared secret.
 use axum::{
-    extract::{Path, State}, http::{HeaderMap, StatusCode}, routing::{get, post},
+    extract::{Path, Query, State}, http::{HeaderMap, StatusCode}, routing::{get, post},
     Json, Router,
 };
 use basalt_thread_store::{accept_turn, commit_turn, history, request_hash, LedgerError};
@@ -199,6 +199,43 @@ async fn read_metrics(
 }
 
 #[derive(Deserialize)]
+struct EventCursor { after: Option<i64> }
+async fn read_turn_events(
+    State(app): State<Arc<App>>, headers: HeaderMap,
+    Path((tid,turn)): Path<(Uuid,Uuid)>, Query(cursor): Query<EventCursor>,
+) -> Result<Json<Value>> {
+    authorize(&headers,&app)?;
+    let after=cursor.after.unwrap_or(0);
+    if after < 0 {return Err(error(StatusCode::BAD_REQUEST,"event sequence must be nonnegative"));}
+    let rows=sqlx::query(
+       "SELECT e.sequence,e.event_type,e.payload,e.created_at
+        FROM thread_events e JOIN turns x ON x.id=e.turn_id
+        JOIN threads t ON t.id=x.thread_id
+        WHERE t.id=$1 AND t.owner_id=$2 AND t.status='active'
+          AND e.turn_id=$3 AND e.sequence>$4
+        ORDER BY e.sequence LIMIT 1000"
+    ).bind(tid).bind(app.owner).bind(turn).bind(after)
+       .fetch_all(&app.pool).await.map_err(db_error)?;
+    // A nonexistent or unauthorized turn must never be distinguishable by timing
+    // from another tenant's events.
+    let exists:bool=sqlx::query_scalar(
+       "SELECT EXISTS(SELECT 1 FROM turns x JOIN threads t ON t.id=x.thread_id
+                      WHERE t.id=$1 AND t.owner_id=$2 AND x.id=$3 AND t.status='active')"
+    ).bind(tid).bind(app.owner).bind(turn).fetch_one(&app.pool).await.map_err(db_error)?;
+    if !exists {return Err(error(StatusCode::NOT_FOUND,"turn not found"));}
+    let mut events=Vec::with_capacity(rows.len());
+    for row in rows {
+        events.push(json!({
+           "sequence":row.try_get::<i64,_>("sequence").map_err(db_error)?,
+           "type":row.try_get::<String,_>("event_type").map_err(db_error)?,
+           "payload":row.try_get::<Value,_>("payload").map_err(db_error)?
+        }));
+    }
+    let next_after=events.last().and_then(|e|e["sequence"].as_i64()).unwrap_or(after);
+    Ok(Json(json!({"object":"list","data":events,"next_after":next_after,
+       "more_possible":events.len()==1000})))
+}
+#[derive(Deserialize)]
 struct NewTurn {
     branch_id: Uuid,
     expected_version: i64,
@@ -372,6 +409,7 @@ async fn main() -> std::result::Result<(),Box<dyn std::error::Error>> {
        .route("/v1/threads/{id}/branches/{branch}",get(read_branch))
        .route("/v1/threads/{id}/branches/{branch}/messages",get(read_branch_messages))
        .route("/v1/threads/{id}/turns",post(run_turn))
+       .route("/v1/threads/{id}/turns/{turn}/events",get(read_turn_events))
        .with_state(app);
     let addr:SocketAddr="127.0.0.1:8095".parse()?;
     let listener=tokio::net::TcpListener::bind(addr).await?;
