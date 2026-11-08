@@ -271,3 +271,27 @@ must match prompt depth, input tokens and reused-prefix tokens whenever
 those measurements are supplied. Missing or malformed work accounting
 is **INDETERMINATE**. Always keep the source JSON artifacts for
 independent inspection.
+
+## Continuous trace completeness receipt
+
+For `PROBE trace file PATH`, shutdown now prints exactly one terminal
+receipt in the engine log:
+`PROBE trace file end written=N dropped_capacity=N dropped_contention=N
+io_errors=N complete=0|1`. Completion is true only when both drop
+counters and all write/flush/close errors are zero. This receipt is
+**separate** from the CSV so malformed tail data cannot forge success.
+
+Validate a captured file and its *matching* shutdown log before feeding
+it into `aei-shadow`:
+
+```sh
+python tools/aei_trace_file_gate.py events.csv engine.log
+```
+
+The validator checks the terminal receipt, exact row count, numeric
+bounds, per-stream continuous sequence numbers, stream cardinality and
+streaming SHA-256 provenance. A missing, duplicate, or failed receipt,
+or a gap in the original sequence, fails closed with exit code 2.
+The certificate is a program-generated assessment of the captured
+files, not an authenticated signature, GPU performance measurement or
+a substitute for the full target engine E2E.
