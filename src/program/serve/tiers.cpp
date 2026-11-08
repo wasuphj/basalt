@@ -160,12 +160,17 @@ void Runtime::rank_swaps(std::vector<Swap>& swaps, bool across) {
             const int32_t* r = host_res.data() + l * g.n_expert;
             const float weight = cost_reference
                 ? aei_rank_costs->multiplier((uint32_t)l, cost_reference) : 1.0f;
+            const bool reuse_enabled = aei_reuse_index != nullptr;
             for (int32_t e = 0; e < (int32_t) g.n_expert; ++e) {
                 const int32_t rk = prof_rank[(size_t) (l * g.n_expert + e)];
-                if (r[e] >= 0) vict.push_back({u[e] * weight, rk, (int32_t) l, e});
+                const float reuse_weight = reuse_enabled
+                    ? aei_reuse_index->priority_multiplier((size_t)l * (size_t)g.n_expert + (size_t)e)
+                    : 1.0f;
+                const float total_weight = weight * reuse_weight;
+                if (r[e] >= 0) vict.push_back({u[e] * total_weight, rk, (int32_t) l, e});
                 else if (u[e] >= 1.5f && !(remote_opt && remote_opt->owns(l, e)))
                     cand.push_back({(peer.valid() && peer.has(l, e) ? u[e] - promote_margin : u[e]) *
-                                   weight, rk, (int32_t) l, e});
+                                   total_weight, rk, (int32_t) l, e});
             }
         }
         if (cand.empty() || vict.empty()) return;
