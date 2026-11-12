@@ -1,5 +1,7 @@
 // src/program/serve/commands.cpp - scheduling and protocol command dispatch.
 #include "request.hpp"
+#include <cerrno>
+#include <cstdlib>
 
 namespace basalt::program::serve {
 
@@ -223,6 +225,29 @@ Flow Runtime::dispatch() {
                 : thread_tapes.append(id, head, new_head, ids, (size_t) o.max_context, n_vocab);
             if (!r.ok) std::printf("ERR THREAD: %s\n", r.why);
             else std::printf("THREAD_OK %s %s\n", command.c_str(), id.c_str());
+            std::fflush(stdout);
+            return Flow::next;
+        }
+        if (command == "THREAD_FORK") {
+            // THREAD_FORK <parent> <parent_head> <child> <child_head> [keep_tokens]
+            std::string child, child_head;
+            long long keep = 0;
+            std::string keep_text;
+            in >> head >> child >> child_head;
+            if (in >> keep_text) {
+                char* end = nullptr;
+                errno = 0;
+                keep = std::strtoll(keep_text.c_str(), &end, 10);
+                if (errno != 0 || end == keep_text.c_str() || *end != '\0') keep = -1;   // not a plain integer
+            }
+            if (in >> extra || keep < 0) {
+                std::printf("ERR THREAD: bad fork arguments\n");
+            } else {
+                const auto r = thread_tapes.fork(id, head, child, child_head, (size_t) keep);
+                if (!r.ok) std::printf("ERR THREAD: %s\n", r.why);
+                else std::printf("THREAD_OK THREAD_FORK %s %s %zu\n", id.c_str(), child.c_str(),
+                                 thread_tapes.shared_prefix(id, child));
+            }
             std::fflush(stdout);
             return Flow::next;
         }

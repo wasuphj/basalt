@@ -630,6 +630,51 @@ class ProcessEngine:
             if time.time() > deadline:
                 raise EngineDied("the engine did not answer the context command")
 
+    THREAD_TIMEOUT_S = 10.0
+    _THREAD_NAME = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+    def thread_command(self, command: str, timeout: float | None = None) -> list[str]:
+        """Send one THREAD_ATTACH/APPEND/FORK/RELEASE line and return the fields after `THREAD_OK`. ValueError carries
+        the engine's refusal. Solo engines only, and the caller holds the service FIFO: the reply is one line read from
+        the shared queue, which nothing else is using between requests."""
+        if not self.alive():
+            raise EngineDied("the engine is not running")
+        if self.batch:
+            raise ValueError("native thread tapes need the solo engine (no --parallel)")
+        if "\n" in command or not command.startswith("THREAD_"):
+            raise ValueError("not a THREAD command")
+        try:                                              # a late reply to an earlier timed-out command
+            while True:
+                self.lines.get_nowait()
+        except queue.Empty:
+            pass
+        self._send(command)
+        deadline = time.time() + (self.THREAD_TIMEOUT_S if timeout is None else timeout)
+        while True:
+            try:
+                line = self.lines.get(timeout=max(0.1, deadline - time.time()))
+            except queue.Empty:
+                raise EngineDied("the engine did not answer the THREAD command") from None
+            if line is None:
+                raise EngineDied("the engine ended")
+            line = line.strip()
+            if line.startswith("ERR"):
+                raise ValueError(line[4:].strip() or "the engine refused the THREAD command")
+            if line.startswith("THREAD_OK "):
+                return line.split()[1:]
+            if time.time() > deadline:
+                raise EngineDied("the engine did not answer the THREAD command")
+
+    def thread_fork(self, parent: str, parent_head: str, child: str, child_head: str, keep: int = 0) -> int:
+        """Fork a thread tape; returns the token prefix length parent and child share (what KV reuse can cover)."""
+        names = (parent, parent_head, child, child_head)
+        if not all(isinstance(n, str) and self._THREAD_NAME.fullmatch(n) for n in names):
+            raise ValueError("thread and head names are 1..128 characters of A-Z a-z 0-9 - _")
+        if not isinstance(keep, int) or isinstance(keep, bool) or keep < 0:
+            raise ValueError("keep must be a non-negative integer")
+        fields = self.thread_command(f"THREAD_FORK {parent} {parent_head} {child} {child_head} {keep}")
+        return int(fields[-1])
+
     ENC_TIMEOUT_S = 300.0
 
     def encode_images(self, jobs: list, timeout: float | None = None) -> list[str]:
