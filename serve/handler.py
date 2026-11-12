@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from serve.api import responses as responses_api
+from serve.api import context_proxy, thread_proxy
 from serve.api.responses import error_body as responses_error_body
 from serve import ROOT
 from serve.api.anthropic import anthropic_collect, anthropic_events
@@ -213,6 +214,16 @@ def make_handler(svc: Service):
 
         def do_GET(self):
             path = self.path.split("?")[0].rstrip("/")
+            if thread_proxy.is_thread_path(path):
+                if self._authorized():
+                    status, body = thread_proxy.forward("GET", path)
+                    self._json(status, body)
+                return
+            if context_proxy.is_context_path(path):
+                if self._authorized():
+                    status, body = context_proxy.forward("GET", path)
+                    self._json(status, body)
+                return
             if path.startswith("/fonts/"):
                 name = path[len("/fonts/"):]
                 f = ROOT / "serve" / "web" / "fonts" / name
@@ -288,7 +299,8 @@ def make_handler(svc: Service):
                     elif not loaded and (svc.idle_unload_s or getattr(svc.engine, "unloaded", False)):
                         model["status"] = {"value": "unloaded"}   # listed, loads on use
                         loaded = True
-                    self._json(200, {"object": "list", "data": [model] if loaded else []})
+                    data = [model, *({**model, "id": x, "alias_of": svc.model} for x in svc.aliases)] if loaded else []
+                    self._json(200, {"object": "list", "data": data})
             elif path == "/props":
                 if self._authorized():
                     self._props()
@@ -301,6 +313,19 @@ def make_handler(svc: Service):
                     self._json(200, svc.v1_status())
             else:
                 self._json(404, {"error": {"message": "not found"}})
+
+        def do_DELETE(self):
+            if not self._authorized():
+                return
+            path = self.path.split("?")[0].rstrip("/")
+            if context_proxy.is_context_path(path):
+                status, body = context_proxy.forward("DELETE", path)
+                if status == 202 and svc.context is not None:
+                    # the row is tombstoned: free the engine's snapshot payload and let GC purge the row
+                    svc.context.note_delete(path.rsplit("/", 1)[-1])
+                self._json(status, body)
+                return
+            self._json(405, {"error": {"message": "method not allowed"}})
 
         def do_POST(self):
             if not self._authorized():
@@ -332,6 +357,15 @@ def make_handler(svc: Service):
                 req = json.loads(self._body() or b"{}")
                 if not isinstance(req, dict):
                     raise ValueError("send a JSON object")
+                if thread_proxy.is_thread_path(path):
+                    status, body = thread_proxy.forward("POST", path, req)
+                    self._json(status, body)
+                    return
+                if context_proxy.is_context_path(path):
+                    key = self.headers.get("Idempotency-Key")
+                    status, body = context_proxy.forward("POST", path, req, idempotency_key=key)
+                    self._json(status, body)
+                    return
                 if path.startswith("/v1/responses/"):        # nothing is stored
                     self._json(404, responses_error_body("this server keeps no responses (stateless); send the "
                                                          "whole conversation to POST /v1/responses", code="not_found"))
@@ -380,6 +414,9 @@ def make_handler(svc: Service):
                     return
                 svc.request_ctx.path = path
                 svc.request_ctx.model = svc.model            # always the served name, never the requested one
+                svc.request_ctx.request = req                 # the thread binding the context adapter reads
+                svc.request_ctx.agent = self.headers.get("X-Agent-Id") or "default"
+                svc.request_ctx.tenant = self.headers.get("X-Tenant-Id") or "default"
                 if path == "/v1/responses":
                     self._responses(req)
                 elif path == "/v1/chat/completions":
