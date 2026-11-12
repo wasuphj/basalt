@@ -22,6 +22,7 @@ import json
 import os
 import threading
 import time
+import sys
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Protocol
 
@@ -86,7 +87,7 @@ def _fsync_dir(path: str) -> None:
 class Journal:
     def __init__(self, directory: str):
         self.dir = directory
-        os.makedirs(directory, exist_ok=True)
+        os.makedirs(directory, 0o700, exist_ok=True)
 
     def _path(self, key: str) -> str:
         return os.path.join(self.dir, hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json")
@@ -111,7 +112,11 @@ class Journal:
         out = []
         for name in sorted(os.listdir(self.dir)):
             if name.endswith(".json"):
-                t = self._read(os.path.join(self.dir, name))
+                try:
+                    t = self._read(os.path.join(self.dir, name))
+                except (TypeError, ValueError) as e:      # not a transition (a stray or corrupt file): skip it,
+                    print(f"mantle: skipping unreadable journal file {name}: {e}", file=sys.stderr)
+                    continue                              # one bad file must not block status and recover
                 if t is not None:
                     out.append(t)
         return out

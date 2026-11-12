@@ -70,6 +70,16 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(out)["state"], "ROLLED_BACK")
 
+    def test_a_stray_file_does_not_block_the_journal_read(self):
+        self._patch(Mock())
+        self._main("submit", self.h, "--key", "k5", "--direction", "demote",
+                   "--source", "big", "--target", "little")
+        with open(os.path.join(self.tmp.name, "notes.json"), "w") as f:
+            f.write('{"schema_version": 1, "not": "a transition"}')      # e.g. a handoff dropped beside the journal
+        code, out = self._main("status", "--all")
+        self.assertEqual(code, 0)
+        self.assertEqual([t["key"] for t in json.loads(out)], ["k5"])    # the stray is skipped, not fatal
+
 
 class ConfigurationTests(unittest.TestCase):
     def _cleared(self, *names):
