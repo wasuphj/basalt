@@ -296,9 +296,11 @@ def text_format(req: dict):
     raise ResponsesError("text.format.type must be text, json_object or json_schema", "text.format.type")
 
 
-def check_request(req: dict) -> None:
-    """What this stateless server cannot do, refused before anything runs."""
-    if req.get("previous_response_id"):
+def check_request(req: dict, stateful: bool = False) -> None:
+    """What this stateless server cannot do, refused before anything runs. With the context registry configured
+    (`stateful`), `previous_response_id` is allowed: it binds a thread context through the server adapter, and an id
+    the server never issued falls to an explicit replay of the input, never to a guess."""
+    if req.get("previous_response_id") and not stateful:
         raise ResponsesError("this server keeps no responses (stateless): send the whole conversation in input "
                              "instead of previous_response_id", "previous_response_id", "unsupported_parameter")
     if req.get("conversation"):
@@ -341,7 +343,7 @@ class Assembler:
             "background": False, "error": None, "incomplete_details": None,
             "instructions": req.get("instructions"), "max_output_tokens": req.get("max_output_tokens"),
             "model": model, "output": [], "parallel_tool_calls": req.get("parallel_tool_calls", True),
-            "previous_response_id": None,
+            "previous_response_id": req.get("previous_response_id"),
             "reasoning": {"effort": reasoning.get("effort"), "summary": reasoning.get("summary")},
             "store": False, "temperature": req.get("temperature"),
             "text": req.get("text") if isinstance(req.get("text"), dict) else {"format": {"type": "text"}},

@@ -23,6 +23,7 @@ from serve.api.grammar import grammar_spec, unenforced
 from serve.config import GRAMMAR_DEFAULT
 from serve.api.context_adapter import ContextAdapter
 from serve.api.context_lifecycle import ContextLifecycle
+from serve.mantle.context_client import ResponseThreadMap
 from serve.scheduler import adapter as sched
 from serve.scheduler.core import AdmissionExpired, AdmissionRejected, PREFILL
 
@@ -149,9 +150,25 @@ class Service:
                 min_free_vram_mib=int(os.environ.get("BASALT_SCHEDULER_MIN_FREE_VRAM_MIB", "0") or 0))
         # agent contexts ride the registry sidecar; off unless BASALT_THREAD_API_KEY is configured
         self.context = None
-        ctx_adapter = ContextAdapter.from_env()
-        if ctx_adapter is not None:
+        # a bounded in-RAM previous_response_id -> thread binding: the Responses adapter chains turns through it,
+        # and an id it never issued falls to the adapter's explicit replay, never a guess
+        self.response_threads = ResponseThreadMap()
+        ctx_adapter = ContextAdapter.from_env(resolver=self.response_threads)
+        # ... and only for an engine that speaks CONTEXT_* (a mock or older engine would fail after the reply is made)
+        if ctx_adapter is not None and callable(getattr(self.engine, "context_command", None)):
             self.context = ContextLifecycle(self, ctx_adapter)
+
+    def bind_response(self, req, response_id: str) -> None:
+        """Chain a completed response's id to the thread binding it answered, so the next turn can name this
+        response as previous_response_id. Unbound responses and an unconfigured registry remember nothing."""
+        if self.context is None or not isinstance(req, dict):
+            return
+        try:
+            binding = self.context.ad.extract_binding(req)
+        except Exception:
+            return
+        if binding is not None and binding.thread_id:
+            self.response_threads.remember(response_id, binding.thread_id, binding.branch_id)
 
     def loaded(self) -> bool:
         return not hasattr(self.engine, "alive") or self.engine.alive()
@@ -652,6 +669,39 @@ class Service:
         return sched.add_metrics({"engine": engine, "live": live, "requests": hist[::-1][:REQUESTS_SHOWN],
                                   "best": best, "hardware": tel["now"], "hardware_static": tel["static"],
                                   "history": tel["history"]}, self.scheduler)
+
+    THREAD_FIFO_WAIT_S = 2.0
+
+    def _thread_engine_call(self, fn):
+        """Run a native thread-tape command on the request fifo, but never wait behind a long generation."""
+        if not self.fifo.acquire(timeout=self.THREAD_FIFO_WAIT_S):
+            raise GpuBusy("the engine is busy with a request; retry the thread command")
+        try:
+            return fn()
+        finally:
+            self.fifo.release()
+
+    def thread_attach(self, thread: str, head: str, ids: list) -> None:
+        """Attach a native thread tape (engine THREAD_ATTACH)."""
+        command = getattr(self.engine, "thread_command", None)
+        if command is None:
+            raise ValueError("this engine has no native thread tapes")
+        name = self.engine._THREAD_NAME if hasattr(self.engine, "_THREAD_NAME") else None
+        if name is not None and not (name.fullmatch(thread or "") and name.fullmatch(head or "")):
+            raise ValueError("thread and head names are 1..128 characters of A-Z a-z 0-9 - _")
+        if not ids or not all(isinstance(t, int) and not isinstance(t, bool) and t >= 0 for t in ids):
+            raise ValueError("ids must be a non-empty list of token ids")
+        self._thread_engine_call(lambda: command(f"THREAD_ATTACH {thread} {head} " + ",".join(map(str, ids))))
+
+    def thread_fork(self, parent: str, parent_head: str, child: str, child_head: str, keep: int = 0) -> int:
+        """Fork a native thread tape (engine THREAD_FORK); returns the shared token prefix length."""
+        fork = getattr(self.engine, "thread_fork", None)
+        if fork is None:
+            raise ValueError("this engine has no native thread tapes")
+        name = getattr(self.engine, "_THREAD_NAME", None)       # a bad request is refused before it waits for the engine
+        if name is not None and not all(isinstance(n, str) and name.fullmatch(n) for n in (parent, parent_head, child, child_head)):
+            raise ValueError("thread and head names are 1..128 characters of A-Z a-z 0-9 - _")
+        return self._thread_engine_call(lambda: fork(parent, parent_head, child, child_head, keep))
 
     def _note_best(self, r: dict) -> None:
         """Keep finished request `r` as the best decode or prefill when it is the fastest big enough one.
