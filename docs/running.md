@@ -301,3 +301,24 @@ adaptive tier's settings for the requests that follow, so the next request runs 
 `PROBE end adapt every= swaps= decay= moved= peer_moved= kept= ms=` (slots copied on each card, slots left as they
 were, wall time). It needs the adaptive tier on and one main card (no layer split, at most one peer card, not
 `--peer-exclusive`); a swap count above the start's `--adapt-swaps` finds fewer free RAM places for its rounds.
+
+## Mantle handoff: `python -m serve.mantle.runner`
+
+When a long agent job moves between a BIG and a LITTLE model, the canonical transcript (never raw KV, which cannot
+cross models) is re-prefilled under the destination's fingerprint. The runner drives that transition through the
+context registry and the `vman` controller, journaling every effect so `submit` is safe to re-run with the same
+`--key` and `recover` finishes what a crash left half-done:
+
+```
+MANTLE_PROFILES='{"qwen3.8-flash-next-nvfp4":"strata","gpt-oss-120b":"llm"}' \
+  python -m serve.mantle.runner submit handoff.json --key job-7 --direction demote \
+    --source gpt-oss-120b --target qwen3.8-flash-next-nvfp4
+python -m serve.mantle.runner status job-7      # the journaled transition (state, history, context_id)
+python -m serve.mantle.runner recover           # after a crash: finish non-terminal transitions
+```
+
+`handoff.json` is the `serve.mantle.Handoff` envelope (`plan`, `evidence`, `task_dag`, `transcript_ref`,
+`source_fingerprint`, `target_model`). It needs `MANTLE_PROFILES` (model to `vman` profile) and the context
+registry (`BASALT_THREAD_API_KEY`); the journal directory is `$MANTLE_JOURNAL_DIR` (default
+`/data/runner/strata/state/mantle-journal`). A transition that cannot complete rolls back and reports
+`ROLLBACK_FAILED` rather than crashing; `submit` exits 0 only on `RUNNING`.
