@@ -10,7 +10,7 @@ GiB, and a `--idle-sleep` wake reads `Waking up`. `/metrics` has `live.state` `l
 or `wake`; `/v1/status` and `/health` carry `loading`. Requests wait, then are served; a failed load gives them a 503 in
 the API's own error shape. The start-up load tries once and a failure ends the server; reloads try up to 3 times.
 
-The [agent context sharing proposal](architecture/agent-context-sharing.md) describes a future forkable context registry, shared prefix pages and GPU/RAM/disk recovery. These APIs and scheduler changes are **not implemented**; the behavior below remains the current reference.
+The [agent context sharing](architecture/agent-context-sharing.md) implementation is live when the registry sidecar is configured (`BASALT_THREAD_API_KEY`, see the [contract](architecture/agent-context-contract.md)): thread-bound contexts with GPU→RAM→SSD recovery, the fair agent scheduler (`BASALT_AGENT_SCHEDULER`), the Responses `previous_response_id` binding, and advisory harness hints (`POST /v1/contexts/{id}/hint`) that may defer an idle context's cool within a 15-minute ceiling but never change correctness or block an eviction. With none of that configured, the behavior below is the whole story.
 
 ## Concurrent requests: `--parallel N`
 

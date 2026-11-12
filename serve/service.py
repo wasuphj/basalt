@@ -666,9 +666,12 @@ class Service:
             {"now": {"gpus": []}, "history": {}, "static": {"gpus": []}}
         with self.status_lock:
             best = {k: dict(v) for k, v in self.best.items()}
-        return sched.add_metrics({"engine": engine, "live": live, "requests": hist[::-1][:REQUESTS_SHOWN],
-                                  "best": best, "hardware": tel["now"], "hardware_static": tel["static"],
-                                  "history": tel["history"]}, self.scheduler)
+        metrics = {"engine": engine, "live": live, "requests": hist[::-1][:REQUESTS_SHOWN],
+                   "best": best, "hardware": tel["now"], "hardware_static": tel["static"],
+                   "history": tel["history"]}
+        if self.context is not None:      # an unconfigured context service leaves /metrics byte-identical
+            metrics["context_hints"] = self.context.hint_metrics()
+        return sched.add_metrics(metrics, self.scheduler)
 
     THREAD_FIFO_WAIT_S = 2.0
 

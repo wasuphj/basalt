@@ -48,6 +48,9 @@ class ContextLifecycle:
         self.live_id: str | None = None   # the context the engine session's conversation currently is
         self.hot: dict[str, dict] = {}    # HOT contexts: {"used": monotonic, "gen": int}
         self.drops: set[str] = set()      # tombstoned ids whose engine payload is not yet freed
+        self._hint_counts = {k: 0 for k in ("accepted", "idempotent_replays", "rejected_bad",
+                                            "rejected_unknown", "rejected_stale", "deferral_rounds",
+                                            "expired_without_resume", "honored")}
         self._stop = threading.Event()
         if self.cool_idle_s > 0:
             threading.Thread(target=self._reap_loop, daemon=True, name="basalt-ctx-reaper").start()
@@ -245,7 +248,18 @@ class ContextLifecycle:
     def _cool_idle(self) -> None:
         now = time.monotonic()
         with self.lock:
-            stale = [cid for cid, i in self.hot.items() if now - i["used"] > self.cool_idle_s]
+            stale = []
+            for cid, i in self.hot.items():
+                if now - i["used"] <= self.cool_idle_s:
+                    continue
+                hint = i.get("hint")
+                if hint:
+                    if hint["expires_at"] > now:
+                        self._hint_counts["deferral_rounds"] += 1
+                        continue          # the harness predicts a resume: hold it HOT within the ceiling.
+                    i.pop("hint", None)   # A resume that already happened re-marked the entry (no hint here),
+                    self._hint_counts["expired_without_resume"] += 1   # a lease blocks us, or TTL lapsed
+                stale.append(cid)
         if not stale or not self.svc.loaded():
             return
         if not self.svc.fifo.acquire(timeout=self.REAPER_FIFO_WAIT_S):
@@ -308,8 +322,78 @@ class ContextLifecycle:
 
     def _mark_hot(self, cid: str, gen: int) -> None:
         with self.lock:
+            prev = self.hot.get(cid)
+            if prev and prev.get("hint") and prev["hint"]["expires_at"] > time.monotonic():
+                self._hint_counts["honored"] += 1     # the resume the harness predicted arrived
             self.live_id = cid
             self.hot[cid] = {"used": time.monotonic(), "gen": gen}
+
+    # -- harness hints (H1) -----------------------------------------------------------------
+    # An advisory channel: the harness says a context will resume (e.g. "tool_wait_started"). The only H1
+    # consumer is the idle reaper's timing. A hint may defer an idle cool within a hard ceiling; it can never
+    # block a tombstone drain, a pressure eviction or the disk guard, and with no (or an expired) hint the
+    # policy is exactly the old one. resume_probability is recorded for H2 and acts on nothing in H1.
+    HINT_MAX_IDLE_MS = 900_000        # 15 min hard ceiling: a hint never defers a cool past this
+    HINT_GRACE_S = 30.0               # hold a little past the expected resume to absorb harness clock skew
+    HINT_SEEN_MAX = 32                # replay ids remembered per HOT entry
+
+    def note_hint(self, cid: str, body) -> "tuple[int, dict]":
+        """Accept one advisory hint for a HOT context. Validation is strict; the effect is timing only."""
+        if not isinstance(body, dict):
+            self._hint_counts["rejected_bad"] += 1
+            return 422, {"error": {"code": "invalid_request", "message": "expected a hint object"}}
+        event, idle = body.get("event"), body.get("expected_idle_ms")
+        hid, prob, gen = body.get("hint_id"), body.get("resume_probability"), body.get("generation")
+        bad = None
+        if not isinstance(event, str) or not event or len(event) > 64:
+            bad = "event must be a short string (e.g. tool_wait_started)"
+        elif isinstance(idle, bool) or not isinstance(idle, int) or not 0 <= idle <= self.HINT_MAX_IDLE_MS:
+            bad = f"expected_idle_ms must be an integer 0..{self.HINT_MAX_IDLE_MS}"
+        elif hid is not None and (not isinstance(hid, str) or not hid or len(hid) > 128):
+            bad = "hint_id must be a short string when present"
+        elif prob is not None and (isinstance(prob, bool) or not isinstance(prob, (int, float))
+                                   or not 0.0 <= float(prob) <= 1.0):
+            bad = "resume_probability must be a number 0..1 when present"
+        elif gen is not None and (isinstance(gen, bool) or not isinstance(gen, int)):
+            bad = "generation must be an integer when present"
+        if bad:
+            self._hint_counts["rejected_bad"] += 1
+            return 422, {"error": {"code": "invalid_request", "message": bad}}
+        with self.lock:
+            info = self.hot.get(cid)
+            if info is None:            # not HOT in this session: stale, already cooled, or never ours
+                self._hint_counts["rejected_unknown"] += 1
+                return 404, {"error": {"code": "context_not_found", "message": "no HOT context here to hint"}}
+            if gen is not None and gen != info.get("gen"):
+                self._hint_counts["rejected_stale"] += 1   # a hint written against an older HOT generation
+                return 409, {"error": {"code": "conflict",
+                                       "message": f"hint names generation {gen}, this HOT is {info.get('gen')}"}}
+            seen = info.setdefault("hint_ids", [])
+            if hid is not None and hid in seen:            # a redelivery of an accepted hint changes nothing
+                self._hint_counts["idempotent_replays"] += 1
+                cur = info.get("hint")
+                ttl = max(0, int((cur["expires_at"] - time.monotonic()) * 1000)) if cur else 0
+                return 200, {"context_id": cid, "accepted": True, "replay": True, "expires_in_ms": ttl}
+            now = time.monotonic()
+            info["hint"] = {"event": event, "expected_idle_ms": idle, "hint_id": hid,
+                            "resume_probability": prob, "received_at": now,
+                            "expires_at": now + idle / 1000.0 + self.HINT_GRACE_S}
+            if hid is not None:
+                seen.append(hid)
+                del seen[:-self.HINT_SEEN_MAX]
+            self._hint_counts["accepted"] += 1
+            return 200, {"context_id": cid, "accepted": True,
+                         "expires_in_ms": int(idle + self.HINT_GRACE_S * 1000)}
+
+    def hint_metrics(self) -> dict:
+        """/metrics view: live hints and the misprediction-relevant counters (analysis, not policy)."""
+        now = time.monotonic()
+        with self.lock:
+            active = {cid: {"event": i["hint"]["event"], "expected_idle_ms": i["hint"]["expected_idle_ms"],
+                            "remaining_ms": max(0, int((i["hint"]["expires_at"] - now) * 1000)),
+                            "resume_probability": i["hint"]["resume_probability"]}
+                      for cid, i in self.hot.items() if i.get("hint")}
+            return {"active": active, "counters": dict(self._hint_counts)}
 
     def _release(self, h: _Handle) -> None:
         if h.lease is not None:
