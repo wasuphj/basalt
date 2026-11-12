@@ -9,7 +9,7 @@ from contextlib import redirect_stdout
 from serve.mantle import runner
 from serve.mantle.orchestrator import Orchestrator
 
-from .test_mantle_orchestrator import Mock, handoff
+from serve.tests.test_mantle_orchestrator import Mock, handoff
 
 
 class RunnerTests(unittest.TestCase):
