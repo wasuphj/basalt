@@ -660,6 +660,8 @@ def make_handler(svc: Service):
                         done = x
                 if done is not None and done["finish"] != "cancel" and not cancel.is_set():
                     yield from asm.finish(done)
+                    # the answer stands: chain this response so the next turn may name it as previous_response_id
+                    svc.bind_response(req, asm.response["id"])
             try:
                 items = primed(events(), ids)
             except EngineError:
@@ -716,7 +718,7 @@ def make_handler(svc: Service):
                 pass
 
         def _responses_prepare(self, req):
-            responses_api.check_request(req)
+            responses_api.check_request(req, stateful=svc.context is not None)
             messages = responses_api.input_messages(req)
             tools, names, skipped = responses_api.request_tools(req)
             try:

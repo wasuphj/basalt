@@ -23,6 +23,7 @@ from serve.api.grammar import grammar_spec, unenforced
 from serve.config import GRAMMAR_DEFAULT
 from serve.api.context_adapter import ContextAdapter
 from serve.api.context_lifecycle import ContextLifecycle
+from serve.mantle.context_client import ResponseThreadMap
 from serve.scheduler import adapter as sched
 from serve.scheduler.core import AdmissionExpired, AdmissionRejected, PREFILL
 
@@ -149,10 +150,25 @@ class Service:
                 min_free_vram_mib=int(os.environ.get("BASALT_SCHEDULER_MIN_FREE_VRAM_MIB", "0") or 0))
         # agent contexts ride the registry sidecar; off unless BASALT_THREAD_API_KEY is configured
         self.context = None
-        ctx_adapter = ContextAdapter.from_env()
+        # a bounded in-RAM previous_response_id -> thread binding: the Responses adapter chains turns through it,
+        # and an id it never issued falls to the adapter's explicit replay, never a guess
+        self.response_threads = ResponseThreadMap()
+        ctx_adapter = ContextAdapter.from_env(resolver=self.response_threads)
         # ... and only for an engine that speaks CONTEXT_* (a mock or older engine would fail after the reply is made)
         if ctx_adapter is not None and callable(getattr(self.engine, "context_command", None)):
             self.context = ContextLifecycle(self, ctx_adapter)
+
+    def bind_response(self, req, response_id: str) -> None:
+        """Chain a completed response's id to the thread binding it answered, so the next turn can name this
+        response as previous_response_id. Unbound responses and an unconfigured registry remember nothing."""
+        if self.context is None or not isinstance(req, dict):
+            return
+        try:
+            binding = self.context.ad.extract_binding(req)
+        except Exception:
+            return
+        if binding is not None and binding.thread_id:
+            self.response_threads.remember(response_id, binding.thread_id, binding.branch_id)
 
     def loaded(self) -> bool:
         return not hasattr(self.engine, "alive") or self.engine.alive()
