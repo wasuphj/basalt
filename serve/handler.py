@@ -397,6 +397,14 @@ def make_handler(svc: Service):
                     status, body = context_proxy.forward("POST", path, req, idempotency_key=key)
                     self._json(status, body)
                     return
+                if path.endswith("/hint") and context_proxy.is_context_path(path[:-len("/hint")]):
+                    # serve-local like the engine thread tapes: the registry never sees a hint, and the only
+                    # consumer is the idle reaper's timing (see serve/api/context_lifecycle.py)
+                    if svc.context is None:
+                        return self._json(503, {"error": {"code": "unavailable",
+                                                          "message": "context service not configured"}})
+                    status, body = svc.context.note_hint(path[:-len("/hint")].rsplit("/", 1)[-1], req)
+                    return self._json(status, body)
                 if path.startswith("/v1/responses/"):        # nothing is stored
                     self._json(404, responses_error_body("this server keeps no responses (stateless); send the "
                                                          "whole conversation to POST /v1/responses", code="not_found"))
