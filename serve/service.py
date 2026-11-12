@@ -147,7 +147,8 @@ class Service:
         if os.environ.get("BASALT_AGENT_SCHEDULER", "").lower() in ("1", "on", "true"):
             self.scheduler = sched.scheduler_for_service(
                 self, enabled=True, max_inflight=1,
-                min_free_vram_mib=int(os.environ.get("BASALT_SCHEDULER_MIN_FREE_VRAM_MIB", "0") or 0))
+                min_free_vram_mib=int(os.environ.get("BASALT_SCHEDULER_MIN_FREE_VRAM_MIB", "0") or 0),
+                shadow=os.environ.get("BASALT_SCHEDULER_SHADOW", "").lower() in ("1", "on", "true"))
         # agent contexts ride the registry sidecar; off unless BASALT_THREAD_API_KEY is configured
         self.context = None
         # a bounded in-RAM previous_response_id -> thread binding: the Responses adapter chains turns through it,
@@ -1023,9 +1024,15 @@ class Service:
             if self.scheduler is not None and not par:
                 # the scheduler decides who gets the solo turn; a full queue soft-degrades to plain FIFO
                 try:
+                    expected = None
+                    if self.context is not None:      # a HOT binding means most of this prompt is restorable
+                        pos = self.context.hot_position(getattr(self.request_ctx, "request", None))
+                        if pos:
+                            expected = max((len(ids) if isinstance(ids, (list, tuple)) else 0) - pos, 1)
                     grant = sched.submit(self.scheduler, getattr(self.request_ctx, "tenant", "default"),
                                          getattr(self.request_ctx, "agent", "default"),
-                                         len(ids) if isinstance(ids, (list, tuple)) else 0, PREFILL)
+                                         len(ids) if isinstance(ids, (list, tuple)) else 0, PREFILL,
+                                         expected_cost=expected)
                 except AdmissionRejected:
                     grant = None
             if not getattr(self.engine, "batch", 0):

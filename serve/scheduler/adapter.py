@@ -22,13 +22,14 @@ def scheduler_for_service(service, *, enabled: bool = True, min_free_vram_mib: i
 
 
 def submit(scheduler: AgentScheduler | None, tenant: str, agent: str, cost_tokens: int, kind: str = PREFILL,
-           timeout_s: float | None = None) -> Grant | None:
+           timeout_s: float | None = None, expected_cost: int | None = None) -> Grant | None:
     """Request admission; None when there is no scheduler (the caller proceeds as before). `timeout_s` becomes the
-    queued deadline. Raises AdmissionRejected when the queues are full."""
+    queued deadline. `expected_cost` (cost minus a restorable prefix) feeds shadow scoring only. Raises
+    AdmissionRejected when the queues are full."""
     if scheduler is None:
         return None
     deadline = None if timeout_s is None else time.monotonic() + timeout_s
-    return scheduler.submit(Request(tenant, agent, cost_tokens, kind, deadline))
+    return scheduler.submit(Request(tenant, agent, cost_tokens, kind, deadline, expected_cost))
 
 
 def step(grant: Grant | None, cancel: threading.Event | None = None, beat_s: float = 1.0) -> str:

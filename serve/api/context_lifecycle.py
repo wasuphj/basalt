@@ -47,6 +47,7 @@ class ContextLifecycle:
         self.proc_key = object()          # the engine process the fingerprint belongs to
         self.live_id: str | None = None   # the context the engine session's conversation currently is
         self.hot: dict[str, dict] = {}    # HOT contexts: {"used": monotonic, "gen": int}
+        self.hot_pos: dict[str, tuple] = {}  # cid -> (thread_id, reusable prefix tokens): shadow scoring's estimate
         self.drops: set[str] = set()      # tombstoned ids whose engine payload is not yet freed
         self._hint_counts = {k: 0 for k in ("accepted", "idempotent_replays", "rejected_bad",
                                             "rejected_unknown", "rejected_stale", "deferral_rounds",
@@ -98,6 +99,15 @@ class ContextLifecycle:
         gen, meta = self._locator(locator)
         position = int((detail.get("position") or {}).get("prefix_tokens") or 0)
         h = _Handle(cid, res.lease_token, int(detail.get("version") or 0), "replay", gen)
+        try:
+            b = self.ad.extract_binding(req)
+            if b is not None and b.thread_id:
+                with self.lock:
+                    if len(self.hot_pos) > 2048:
+                        self.hot_pos.pop(next(iter(self.hot_pos)))
+                    self.hot_pos[cid] = (b.thread_id, position)
+        except Exception:
+            pass
         with self.lock:
             live = self.live_id == cid
         if state == "HOT" and live:         # the engine session still holds this conversation: continue it
@@ -176,6 +186,10 @@ class ContextLifecycle:
                 "model_fingerprint": fp, "prefix_hash": prefix, "prefix_tokens": tokens,
                 "locator": f"g{gen},{meta}", "validated": True, "engine_epoch": epoch})
             self._mark_hot(h.cid, gen)
+            with self.lock:                 # the published prefix is what the next request can restore
+                v = self.hot_pos.get(h.cid)
+                if v is not None:
+                    self.hot_pos[h.cid] = (v[0], tokens)
         elif h.mode == "hot":
             self._mark_hot(h.cid, h.gen)    # the freshest bytes stay in RAM until the reaper cools them
 
@@ -394,6 +408,21 @@ class ContextLifecycle:
                             "resume_probability": i["hint"]["resume_probability"]}
                       for cid, i in self.hot.items() if i.get("hint")}
             return {"active": active, "counters": dict(self._hint_counts)}
+
+    def hot_position(self, req) -> int:
+        """Reusable prefix tokens when `req` names a context that is HOT in this session (0: cold or unknown).
+        Shadow scoring's expected-cost estimate only: a wrong guess skews a metric, never a policy."""
+        try:
+            binding = self.ad.extract_binding(req) if isinstance(req, dict) else None
+        except Exception:
+            return 0
+        if binding is None or not binding.thread_id:
+            return 0
+        with self.lock:
+            for cid, (thread, position) in self.hot_pos.items():
+                if thread == binding.thread_id and cid in self.hot:
+                    return position
+        return 0
 
     def _release(self, h: _Handle) -> None:
         if h.lease is not None:
