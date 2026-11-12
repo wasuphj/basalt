@@ -24,6 +24,8 @@ from typing import Callable
 
 PREFILL, DECODE = "prefill", "decode"
 KINDS = (DECODE, PREFILL)                  # service order inside a round: decode is latency sensitive
+DRR, COST = "drr", "cost"                  # selection policy: deficit round robin (the production default,
+                                           # fairness first) or cheapest-expected-first (what shadow observes)
 QUEUED, GRANTED, RELEASED, CANCELLED, EXPIRED = "queued", "granted", "released", "cancelled", "expired"
 WAIT_SAMPLES = 512                         # queue-wait samples kept per kind for the percentiles
 TENANTS_TRACKED = 512                      # idle tenants' counters kept before the oldest are dropped
@@ -56,12 +58,19 @@ class Request:
     cost_tokens: int
     kind: str = PREFILL                      # "prefill" | "decode"
     deadline: float | None = None            # absolute `time.monotonic()` second by which it must be admitted
+    expected_cost: int | None = None         # tokens that must actually be computed (cost minus a restorable
+                                             # prefix); None: treat as cost_tokens. A hint for shadow scoring only.
 
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, got {self.kind!r}")
         if self.cost_tokens < 0:
             raise ValueError("cost_tokens must be >= 0")
+        if self.expected_cost is not None and self.expected_cost < 0:
+            raise ValueError("expected_cost must be >= 0 or None")
+
+    def expected(self) -> int:
+        return self.cost_tokens if self.expected_cost is None else self.expected_cost
 
 
 @dataclass
@@ -79,6 +88,10 @@ class SchedulerConfig:
     tenant_weights: dict = field(default_factory=dict)
     pressure_poll_s: float = 0.05            # how often a pressure hold is re-probed without other events
     background: bool = True                  # timer thread for deadlines / pressure; False: call poll() yourself
+    shadow: bool = False                     # observe-only: rank the queued heads by expected cost and record what
+                                             # DRR passed by; selection never changes (H3 evidence before any policy)
+    shadow_samples: int = 256                # divergences kept for /metrics and the A/B replay
+    policy: str = DRR                        # "drr" (default) or "cost"; the aging floor applies to both
 
 
 class Grant:
@@ -206,6 +219,8 @@ class AgentScheduler:
     def __init__(self, config: SchedulerConfig | None = None, *, pressure: Callable[[], object] | None = None,
                  clock: Callable[[], float] = time.monotonic):
         self.cfg = config or SchedulerConfig()
+        if self.cfg.policy not in (DRR, COST):
+            raise ValueError(f"policy must be '{DRR}' or '{COST}', got {self.cfg.policy!r}")
         self.pressure, self.clock = pressure, clock
         self._lock = threading.Lock()
         self._cv = threading.Condition(self._lock)
@@ -223,6 +238,8 @@ class AgentScheduler:
         self._tenants: dict[str, dict] = {}
         self._n = collections.Counter()      # granted, bypassed, cancelled, expired, rejected, pressure_errors, ...
         self._rejected = collections.Counter()
+        self._shadow = collections.deque(maxlen=max(1, int(self.cfg.shadow_samples)))
+        self._shadow_wasted = 0              # summed expected-token overshoot of DRR picks over the cheapest head
 
     # ----- public API -----------------------------------------------------------------------------------------
 
@@ -437,7 +454,15 @@ class AgentScheduler:
         if pick is None:                     # round over: every kind starts again with its full budget
             self._credit = {k: float(self.cfg.round_tokens.get(k, 0)) for k in KINDS}
             pick = next((k for k in cand if self._credit[k] > 0), cand[0])
+        if self.cfg.policy == COST:          # cheapest expected-cost head of the chosen kind (aging already applied)
+            return self._cheapest(self._tiers[pick])
         return self._head(self._tiers[pick])
+
+    def _cheapest(self, tier: _Tier) -> Grant:
+        """The queued head of one kind with the lowest expected cost (ties: oldest, then seq). This is the same
+        ranking `_shadow_record` compares against, so the A/B replay and the shadow counters agree."""
+        heads = [a.q[0] for t in tier.tenants.values() for a in t.agents.values() if a.q]
+        return min(heads, key=lambda h: (h.request.expected(), h.t_submit, h.seq))
 
     def _pump(self, now: float) -> None:
         if not self._queued:
@@ -445,6 +470,8 @@ class AgentScheduler:
             return
         self._held = self._pressured()
         if self._held:
+            if self.cfg.shadow:
+                self._n["shadow_held_rounds"] += 1
             return
         kinds = list(KINDS)
         cap = self.cfg.max_inflight
@@ -452,12 +479,37 @@ class AgentScheduler:
             g = self._select(kinds, now)
             if g is None:
                 break
+            if self.cfg.shadow:
+                self._shadow_record(g, now)
             if not self._fits(g):            # block that kind behind its selected head; the other kind may go on
                 kinds.remove(g.kind)
                 continue
             self._charge(g)
             self._credit[g.kind] -= g.cost
             self._admit(g, now)
+
+    def _shadow_record(self, g: Grant, now: float) -> None:
+        """Observe-only: how the head DRR picked compares with the cheapest-expected head of the same kind. The
+        aging floor is honoured exactly as `_select` honours it, so a divergence is a real fairness-vs-cost choice,
+        never a starvation the real scheduler would not also avoid. Nothing here changes what is admitted."""
+        tier = self._tiers[g.kind]
+        heads = [a.q[0] for t in tier.tenants.values() for a in t.agents.values() if a.q]
+        if len(heads) < 2:
+            return
+        self._n["shadow_comparisons"] += 1
+        aged = [h for h in heads if now - h.t_submit >= self.cfg.aging_s]
+        alt = min(aged, key=lambda h: (h.t_submit, h.seq)) if aged else self._cheapest(tier)
+        if alt is g:
+            self._n["shadow_agree"] += 1
+            return
+        self._n["shadow_divergences"] += 1
+        pick, cheap = g.request.expected(), alt.request.expected()
+        if pick > cheap:
+            self._n["shadow_cost_overshoot"] += 1
+            self._shadow_wasted += pick - cheap
+        self._shadow.append({"kind": g.kind, "picked_expected": pick, "cheapest_expected": cheap,
+                             "picked_wait_s": round(now - g.t_submit, 3),
+                             "cheapest_wait_s": round(now - alt.t_submit, 3), "aged": bool(aged)})
 
     def _pressured(self) -> bool:
         if self.pressure is None or self._inflight == 0:   # nothing in flight to drain: always make progress
@@ -551,6 +603,8 @@ class AgentScheduler:
             waits = {k: list(v) for k, v in self._waits.items()}
             tenants = {n: dict(v) for n, v in self._tenants.items()}
             n, rej = dict(self._n), dict(self._rejected)
+            shadow = list(self._shadow) if self.cfg.shadow else None
+            wasted = self._shadow_wasted
             out = {"enabled": True, "paused": self._held, "queue_depth": self._queued,
                    "queue_depth_by_kind": {k: self._tiers[k].count for k in KINDS},
                    "inflight": self._inflight, "inflight_tokens": dict(self._inflight_tokens),
@@ -561,4 +615,9 @@ class AgentScheduler:
                     "granted": n.get("granted", 0), "bypassed": n.get("bypassed", 0), "cancelled": n.get("cancelled", 0),
                     "expired": n.get("expired", 0), "rejected": n.get("rejected", 0), "rejected_by_reason": rej,
                     "pressure_errors": n.get("pressure_errors", 0), "tenants": tenants})
+        if self.cfg.shadow:
+            out["shadow"] = {"comparisons": n.get("shadow_comparisons", 0), "agree": n.get("shadow_agree", 0),
+                             "divergences": n.get("shadow_divergences", 0),
+                             "cost_overshoot": n.get("shadow_cost_overshoot", 0), "wasted_expected_tokens": wasted,
+                             "held_rounds": n.get("shadow_held_rounds", 0), "recent": shadow[-20:]}
         return out
