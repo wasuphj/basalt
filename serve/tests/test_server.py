@@ -2883,6 +2883,26 @@ class ThinkingBudget(unittest.TestCase):
         self.assertEqual((msg["reasoning_content"], msg["content"]), (self.engine.THOUGHT, "0" * 600))
         self.assertEqual(len(self.engine.prompts), 1)
 
+    def test_an_answer_of_only_bangs_is_cut_and_stays_length(self):
+        self.engine.ANSWER = "!" * 600
+        code, b = self.openai(max_tokens=2000)
+        self.assertEqual(code, 200, b)
+        self.assertEqual(b["choices"][0]["message"]["content"], "!" * 256)
+        self.assertEqual(b["choices"][0]["finish_reason"], "length")
+
+    def test_a_shorter_bang_run_or_bangs_inside_text_stay(self):
+        self.engine.ANSWER = "!" * 255 + "x" + "!" * 255 + " done!!!"
+        code, b = self.openai(max_tokens=2000)
+        self.assertEqual(code, 200, b)
+        self.assertEqual(b["choices"][0]["message"]["content"], self.engine.ANSWER)
+        self.assertEqual(b["choices"][0]["finish_reason"], "stop")
+
+    def test_the_bang_cut_can_be_turned_off(self):
+        self.svc.answer_bang_chars = 0
+        self.engine.ANSWER = "!" * 600
+        code, b = self.openai(max_tokens=2000)
+        self.assertEqual(b["choices"][0]["message"]["content"], "!" * 600)
+
     def test_the_loop_safeguard_can_be_turned_off(self):
         self.svc.thinking_loop_tokens = 0
         self.engine.THOUGHT = "Let me see. " + "0" * 400
