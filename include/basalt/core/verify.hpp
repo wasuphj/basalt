@@ -419,6 +419,8 @@ private:
     bool dm_begin(std::string& err, DecodeGaps* gm);   ///< the tail's window start (tables, flags, the peer window)
     bool dm_stage_places(std::string& err);            ///< the staged share's RAM addresses, read again when they moved
     bool dm_end(std::string& err);         ///< the peer window's end
+    void dm_wait_report(int64_t T);        ///< --wait-stats: the round report over the last windows, shared by the
+                                           ///  solo and the batch path (a full round prints and resets the counters)
     void dm_free();
     std::string peer_released();           ///< after a release: whether the peer window ended (see dm_note)
     bool capture(int T, std::string& err);
