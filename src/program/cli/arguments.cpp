@@ -179,7 +179,10 @@ std::optional<int> parse_options(int argc, char** argv, Options& o, std::string&
             if (a == "--conversation-cache-mib") o.conversation_cache_mib = number;
             else if (a == "--conversation-cache-min-free-mib") o.conversation_cache_min_free_mib = number;
             else if (a == "--conversation-cache-disk-mib") o.conversation_cache_disk_mib = number;
-            else if (a == "--conversation-cache-min-tokens") o.conversation_cache_min_tokens = (int) number;
+            else if (a == "--conversation-cache-min-tokens") {
+                o.conversation_cache_min_tokens = (int) number;
+                o.conversation_cache_min_tokens_given = true;
+            }
             else o.conversation_cache_slots = (int) number;
         }
         else if (a == "--prompt-cache-every") o.prompt_cache_every = std::max(0LL, std::atoll(next("--prompt-cache-every")));
