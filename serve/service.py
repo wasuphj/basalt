@@ -121,6 +121,8 @@ class Service:
         self.request_ctx = threading.local()            # .path, .model: the API path and model name of this request
         self.slot_last: dict[int, dict] = {}            # per slot: context held and draft counts of its last request
         self.waiting: dict[int, dict] = {}              # single stream: requests waiting for the turn
+        # queued time by what ran ahead of it: {"classes": {cls: {total_s, requests, max_s}}, "total_s", "requests"}
+        self.wait_attr: dict = {"classes": {}, "total_s": 0.0, "requests": 0}
         self.best: dict[str, dict] = {}                 # fastest whole request since start: "decode", "prefill"
         self.history = collections.deque(maxlen=500)    # finished requests, newest last
         self.requests_done = 0                           # finished requests since start
@@ -673,6 +675,10 @@ class Service:
                    "history": tel["history"]}
         if self.context is not None:      # an unconfigured context service leaves /metrics byte-identical
             metrics["context_hints"] = self.context.hint_metrics()
+        with self.status_lock:
+            metrics["wait_attribution"] = {
+                "classes": {k: dict(v) for k, v in self.wait_attr["classes"].items()},
+                "total_s": self.wait_attr["total_s"], "requests": self.wait_attr["requests"]}
         return sched.add_metrics(metrics, self.scheduler)
 
     THREAD_FIFO_WAIT_S = 2.0
@@ -963,6 +969,33 @@ class Service:
                 print(line, flush=True)
         return now
 
+    def _wait_class(self) -> str:
+        """What a queued request waited behind over the last stretch: an empty engine, a prefill, or a decode."""
+        with self.status_lock:
+            states = [st for st, _ in self.live_reqs.values()]
+            if not states and self.status.get("busy"):
+                states = [self.status]
+        if not states:
+            return "idle_gap"
+        if any(st.get("first_token") is None for st in states):
+            return "behind_prefill"
+        return "behind_decode"
+
+    def _merge_wait(self, waited: dict) -> None:
+        """Fold one queued request's waited time, split by class, into the server counters."""
+        total = sum(waited.values())
+        if total < 1.0:                 # a turn that came around at once carries no attribution signal
+            return
+        with self.status_lock:
+            a = self.wait_attr
+            for cls, secs in waited.items():
+                e = a["classes"].setdefault(cls, {"total_s": 0.0, "requests": 0, "max_s": 0.0})
+                e["total_s"] = round(e["total_s"] + secs, 3)
+                e["requests"] += 1
+                e["max_s"] = round(max(e["max_s"], secs), 3)
+            a["total_s"] = round(a["total_s"] + total, 3)
+            a["requests"] += 1
+
     def run(self, ids, thinking, tools, max_new, sampling, cancel, force=None) -> Iterator[tuple[str, object]]:
         """Yield ("event", Event) as text arrives, ("ping", None) as heartbeat, then ("done", {...}).
         `force`: the opening of the call the reply must make (see prepare)."""
@@ -1040,6 +1073,15 @@ class Service:
                 # A request waiting for the single turn sends a keep-alive now and then, so a client with a stream idle
                 # timeout does not abort a healthy queued request; one that left while queued gives its place up.
                 got = False
+                waited: dict[str, float] = {}       # this request's queued seconds by what held the engine
+                beat = time.monotonic()
+                ahead = [self._wait_class()]        # what runs ahead when a waiting stretch begins, not when it ends
+                def settle():                       # charge the stretch just ended, then look at what runs next
+                    nonlocal beat
+                    now = time.monotonic()
+                    waited[ahead[0]] = waited.get(ahead[0], 0.0) + now - beat
+                    beat = now
+                    ahead[0] = self._wait_class()
                 try:
                     while not got:
                         if grant is not None:
@@ -1048,7 +1090,9 @@ class Service:
                             except AdmissionExpired:
                                 break
                             if outcome == "waiting":
+                                settle()
                                 yield "ping", None
+                                beat = time.monotonic()        # suspended at the ping: not queue time
                                 continue
                             if outcome == "cancelled":
                                 break
@@ -1059,7 +1103,9 @@ class Service:
                             elif cancel.is_set():
                                 break
                             else:
+                                settle()
                                 yield "ping", None
+                                beat = time.monotonic()
                             continue
                         got = self.fifo.acquire(timeout=QUEUE_BEAT_S)
                         if got:
@@ -1067,7 +1113,11 @@ class Service:
                         elif cancel.is_set():
                             break
                         else:
+                            settle()
                             yield "ping", None
+                            beat = time.monotonic()
+                    settle()                                    # the stretch that ended with the grant (or a break)
+                    self._merge_wait(waited)
                 except BaseException:                    # the consumer closed us at a ping: no longer queued
                     with self.status_lock:
                         self.status["queued"] -= 1
