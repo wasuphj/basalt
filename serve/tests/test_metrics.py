@@ -75,7 +75,9 @@ class Http(unittest.TestCase):
     def test_the_contract(self):
         code, m = self.call("/metrics")
         self.assertEqual(code, 200)
-        self.assertEqual(set(m), {"engine", "live", "requests", "best", "hardware", "hardware_static", "history"})
+        self.assertEqual(set(m), {"engine", "live", "requests", "best", "hardware", "hardware_static", "history",
+                                  "wait_attribution"})
+        self.assertEqual(m["wait_attribution"], {"classes": {}, "total_s": 0.0, "requests": 0})
         self.assertEqual(m["best"], {})
         self.assertEqual((m["engine"]["model"], m["engine"]["max_context"]), (self.svc.model, 16384))
         self.assertEqual((m["engine"]["version"], m["engine"]["kv"], m["engine"]["expert_slots"]), ("1.2.3", "fp8", 100))

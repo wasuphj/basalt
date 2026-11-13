@@ -1,6 +1,6 @@
-# Agent context sharing and lifecycle — design proposal
+# Agent context sharing and lifecycle — design
 
-Status: **proposed, not implemented**. Scope: Basalt CUDA/Blackwell fork. Inspiration: [inferd](https://github.com/Incept5-AI/inferd); no code is imported. This design extends existing Basalt behavior, not its current CLI contract.
+Status: **implemented, opt-in**: the registry, fork, tiered snapshots, scheduler and Mantle handoff are in the tree and are live when the registry sidecar is configured ([running](../running.md)). Scope: Basalt CUDA/Blackwell fork. Inspiration: [inferd](https://github.com/Incept5-AI/inferd); no code is imported. This design extends existing Basalt behavior, not its current CLI contract.
 
 ## Problem and baseline
 
@@ -46,7 +46,7 @@ RECORDED -> MATERIALIZING -> HOT
 
 Transitions use compare-and-swap version and lease/fencing token. `RECORDED` is always reconstructable from immutable events even if no valid binary snapshot exists. `HOT` means allocated device pages; `WARM` means RAM; `COLD` means verified disk snapshot or replay-only marker. `FAILED` never means the transcript is lost. A fork creates a new child context referencing an immutable parent prefix and allocating private continuation pages (copy-on-write on attempted mutation). Parent deletion cannot reclaim blocks with active child references or leases.
 
-### API contract (proposed, versioned)
+### API contract (versioned)
 
 - `POST /v1/contexts`: create from `thread_id` or immutable input events; return `context_id`, fingerprint, version.
 - `POST /v1/contexts/{id}/fork`: idempotent child creation with expected parent version and `Idempotency-Key`.
@@ -65,7 +65,7 @@ Idempotency keys are scoped by tenant + operation + target; identical payload re
 4. **Phase D — fair agent scheduler:** bounded per-tenant and per-agent admission, prefill/decode budgets, aging to avoid starvation, cancellation deadlines, and metrics for queueing/p95 TTFT. Preserve batch/solo compatibility and detect shared expert/KV VRAM pressure rather than blindly increasing parallel slots.
 5. **Phase E — Mantle handoff:** serialize BIG plan / evidence / task DAG and model-specific checkpoints separately. On BIG→LITTLE transition persist output, release BIG GPU residency, load LITTLE and prefill; on promotion run reverse handoff. Measure total job throughput and quality, not only aggregate tokens/sec.
 
-No production API flags/config values are added until end-to-end implementation exists; this document is a design contract, not a claim that endpoints or a PostgreSQL schema are present today.
+The endpoints and the PostgreSQL schema live in `crates/`; the binding interface is the [implementation contract](agent-context-contract.md).
 
 ## Safety, failure modes and verification
 
