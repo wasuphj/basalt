@@ -150,6 +150,7 @@ class Service:
         self.answer_room: str | int = "auto"             # answer reserve when thinking: "auto" or a fixed token count (0: none)
         self.reasoning_effort: str | None = None         # effort for a request that names none (None: the template's)
         self.thinking_loop_tokens = 256                  # one token repeated this often in the thinking ends it (0: off)
+        self.answer_bang_chars = 256                     # an answer of nothing but "!" this long is a dead model: cut (0: off)
         self.anthropic_think_unasked = True               # "anthropic_thinking": "on_request" -> False
         self.stop_ids = {t for s in self.dialect.stop_texts for t in tokenizer.encode(s, parse_special=True)}
 
@@ -1218,6 +1219,7 @@ class Service:
                     soft_stops = live is not None and "stop_soon" in inspect.signature(self.engine.generate).parameters
                     closed_early = False                # the thinking was already closed once
                     run_id, run_n = None, 0             # the token the thinking is repeating, and how often in a row
+                    bang_n = 0                          # "!" characters in a row in the answer
                     for ev in opening:
                         yield "event", ev
                     while True:
@@ -1285,6 +1287,10 @@ class Service:
                                     run_n = 0
                                 thinking_n += parser.state == "reasoning"
                                 piece = detok.push(t)
+                                if parser.state != "content":
+                                    bang_n = 0
+                                elif piece:
+                                    bang_n = bang_n + len(piece) if not piece.strip("!") else 0
                                 tail = (tail + piece)[-2:]
                                 state0 = parser.state
                                 evs = cut(parser.feed(piece))
@@ -1316,6 +1322,10 @@ class Service:
                                     break
                                 if one_call and any(ev.kind == "tool_call" for ev in evs):
                                     finish = "stop"         # no second call after a forced one
+                                    break
+                                if self.answer_bang_chars and bang_n >= self.answer_bang_chars:
+                                    print(f"[server] the answer is {bang_n} \"!\" in a row, cutting it", flush=True)
+                                    finish = "length"       # gen.close() below STOPs the engine
                                     break
                                 if budget and parser.state == "reasoning":
                                     thought += 1
