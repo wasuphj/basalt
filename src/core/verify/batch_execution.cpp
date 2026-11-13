@@ -228,6 +228,7 @@ bool Verifier::run_slot_segs(const int* rows, const int* lens, int S, const int3
     const bool dm_ok = !dm || dm_end(err);
     if (!window_intact(err) || !dm_ok) return false;
     if (se != cudaSuccess) { err = std::string("verify batch: ") + cudaGetErrorString(se); return false; }
+    if (dm) dm_wait_report(R);   // the batch windows count their rows too: --wait-stats speaks for both paths
     if (prof_on_) collect_profile();
     ++windows;
     if (le_ < g.n_layers) return next_ == nullptr || next_->run_slot_segs(rows, lens, S, tokens, pos, pool, next_user_, out, err);

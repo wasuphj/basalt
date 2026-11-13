@@ -324,6 +324,23 @@ bool Verifier::window_intact(std::string& err) {
 }
 
 // The window's end: the GPU's finish, the profile, and on the last stage the head's picks.
+void Verifier::dm_wait_report(int64_t T) {
+    using namespace basalt::kernels;
+    if (dm_ == nullptr || dm_->wstat == nullptr) return;
+    constexpr int64_t wstat_every = 200;   // windows per report
+    dm_->wstat_t += T;
+    if (++dm_->wstat_windows < wstat_every) return;
+    // --wait-stats: the last wstat_every windows' counters
+    std::vector<unsigned long long> w((size_t) kDmStatWords);
+    cudaMemcpy(w.data(), dm_->wstat, w.size() * 8, cudaMemcpyDeviceToHost);
+    cudaMemset(dm_->wstat, 0, w.size() * 8);
+    const double nw = (double) dm_->wstat_windows;
+    basalt::log::raw("basalt verify: dm_wait over %lld windows (avg T %.2f):\n%s", (long long) dm_->wstat_windows,
+                 dm_->wstat_t / nw, basalt::kernels::dec_moe_stats_text(w.data(), nw).c_str());
+    dm_->wstat_windows = 0;
+    dm_->wstat_t = 0;
+}
+
 bool Verifier::run_end(int32_t* out, std::string& err) {
     using namespace basalt::kernels;
     const OnDevice on_device(device_);
@@ -351,18 +368,7 @@ bool Verifier::run_end(int32_t* out, std::string& err) {
         err = "verify: the zero-doorbell plan met an expert that is not in VRAM (the residency table changed during the window)";
         return false;
     }
-    constexpr int64_t wstat_every = 200;   // windows per report
-    if (dm_ != nullptr && dm_->wstat != nullptr && (dm_->wstat_t += T, ++dm_->wstat_windows == wstat_every)) {
-        // --wait-stats: the last wstat_every windows' counters
-        std::vector<unsigned long long> w((size_t) kDmStatWords);
-        cudaMemcpy(w.data(), dm_->wstat, w.size() * 8, cudaMemcpyDeviceToHost);
-        cudaMemset(dm_->wstat, 0, w.size() * 8);
-        const double nw = (double) dm_->wstat_windows;
-        basalt::log::raw("basalt verify: dm_wait over %lld windows (avg T %.2f):\n%s", (long long) dm_->wstat_windows,
-                     dm_->wstat_t / nw, basalt::kernels::dec_moe_stats_text(w.data(), nw).c_str());
-        dm_->wstat_windows = 0;
-        dm_->wstat_t = 0;
-    }
+    dm_wait_report(T);
     // the window does not retire the commit: whoever reads the session from the host or another stream calls wait_commit(),
     // and a finished event is noticed here at no cost
     if (commit_pending_ && cudaEventQuery(commit_done_) == cudaSuccess) commit_pending_ = false;
