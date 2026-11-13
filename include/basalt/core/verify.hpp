@@ -20,6 +20,9 @@
 // Requires the default native decode configuration (native projections, fused GR, fused GDN, fast attention and
 // selection, native indexer) and a profile-filled VRAM expert tier with its residency table on the device.
 #pragma once
+#include "basalt/core/aei_router_capture.hpp"
+#include "basalt/core/aei_scheduler.hpp"
+#include "basalt/core/aei_cost_rank.hpp"
 
 #include <functional>
 #include <cstdio>
@@ -115,6 +118,32 @@ public:
     Verifier(const Verifier&) = delete;
     Verifier& operator=(const Verifier&) = delete;
     void set_remote_expert_opt(RemoteExpertOpt* opt) { remote_opt_ = opt; } // before init/capture
+    // Optional only: caller binds a fresh stream at a request boundary while idle.
+    // The device-planned MoE path is deliberately excluded until its full router
+    // decisions have a separately verified host-visible source.
+    void set_aei_router_trace(aei::RouterEventBuffer* sink, uint64_t stream) noexcept {
+        router_capture_.bind(sink, stream);
+    }
+    // Read-only timing observations; no scheduler policy is applied to execution.
+    void set_aei_cpu_cost_probe(aei::ShadowScheduler* observer) noexcept {
+        aei_cpu_cost_ = observer;
+    }
+    void set_aei_cost_placement_probe(aei::LayerCostRank* observer) noexcept {
+        aei_layer_cost_ = observer;
+    }
+    void set_aei_reuse_probe(aei::ExpertReuseIndex* observer, uint32_t n_expert) noexcept {
+        router_capture_.set_reuse_index(observer, n_expert);
+    }
+    void set_aei_predictive_prefetch(aei::NextExpertPrefetch* predictor, uint32_t n_expert) noexcept {
+        router_capture_.set_prefetch_index(predictor, n_expert);
+    }
+    // Called only at an idle engine boundary. GPU routing decisions and
+    // expert arithmetic remain unchanged; only CPU/staging share is adjusted.
+    bool aei_update_staged_split(const aei::LayerCostRank* measured_cpu,
+                                 bool baseline, std::string& error);
+    uint64_t aei_staged_dma_ns() const;
+    uint64_t aei_staged_gpu_ns() const;
+    bool aei_staged_split_available() const noexcept;
     /// Before init: the window's main stream outranks other streams' kernels (a prompt read running beside the windows).
     void set_main_priority(bool high) { main_high_ = high; }
     /// The peer expert tier the window drives itself (persistent kernel, mapped rings) instead of the pool launching it
@@ -396,6 +425,9 @@ public:
 private:
     struct WindowRecorder;
     RemoteExpertOpt* remote_opt_ = nullptr;
+    aei::VerifierRouterCapture router_capture_{};
+    aei::ShadowScheduler* aei_cpu_cost_ = nullptr;
+    aei::LayerCostRank* aei_layer_cost_ = nullptr;
     bool main_high_ = false;
     PeerExperts* peer_ = nullptr;
     std::vector<PeerExperts*> xpeers_;

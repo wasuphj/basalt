@@ -1,5 +1,6 @@
 // src/program/serve/tier_profile.cpp - tier profile operations.
 #include "state.hpp"
+#include "basalt/platform/aei_profile_binding.hpp"
 
 namespace basalt::program::serve {
 
@@ -13,11 +14,18 @@ void Runtime::save_profile(const char* why) {
     std::string e;
     const auto ranked = basalt::core::rank_learned_profile(g.n_layers, g.n_expert, resident, heat,
                                                            profile_loaded);
-    if (basalt::core::write_expert_profile(o.expert_profile_save, g.n_layers, g.n_expert, ranked, e))
-        basalt::log::info("basalt serve", "expert profile saved to %s (%s)", o.expert_profile_save.c_str(),
-                     why);
-    else
+    const std::string identity = model_file.expert_profile_identity();
+    if (identity.empty()) {
+        basalt::log::warn("basalt serve", "learned expert profile not saved: no complete model identity");
+    } else if (!basalt::core::write_expert_profile(
+                   o.expert_profile_save, g.n_layers, g.n_expert, ranked, e)) {
         basalt::log::warn("basalt serve", "the expert profile was not saved: %s", e.c_str());
+    } else if (!basalt::platform::aei_bind_profile_identity(o.expert_profile_save, identity)) {
+        basalt::log::warn("basalt serve", "learned profile was saved, but model identity binding failed");
+    } else {
+        basalt::log::info("basalt serve", "expert profile saved with model identity to %s (%s)",
+                          o.expert_profile_save.c_str(), why);
+    }
     profile_saved_at = Clock::now();
 }
 
@@ -72,6 +80,11 @@ bool Runtime::probe_adapt(const std::string& cmd, std::string& e) {
         if (xcache.per_layer_admission()) { e = "PROBE adapt: profile= needs a cache shared by all layers"; return false; }
         std::vector<std::pair<int32_t, int32_t>> q;
         int64_t qslots = 0;
+        if (pfile == o.expert_profile_save &&
+            !basalt::platform::aei_profile_identity_matches(pfile, model_file.expert_profile_identity())) {
+            e = "PROBE adapt: learned profile model identity mismatch";
+            return false;
+        }
         if (!basalt::core::read_expert_profile(basalt::core::FileRange(pfile), g.n_layers, g.n_expert, q, qslots, e)) {
             e = "PROBE adapt: " + e;
             return false;

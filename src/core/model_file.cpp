@@ -1,6 +1,7 @@
 // src/core/model_file.cpp - the .basalt reader, the byte ranges the loaders share, a small JSON parser and the
 // hc8 table.  Host only.  See the header.
 #include "basalt/core/model_file.hpp"
+#include "basalt/core/aei_sha256.hpp"
 
 #include "basalt/artifact/gguf_reader.hpp"
 #include "basalt/platform/file.hpp"
@@ -309,6 +310,7 @@ bool ModelFile::open(const std::string& path, std::string& err) {
         s.name.assign(e.name, strnlen(e.name, sizeof e.name));
         s.offset = e.offset;
         s.bytes = e.bytes;
+        std::copy(std::begin(e.sha256), std::end(e.sha256), s.sha256.begin());
         if (s.offset % kSectionAlign != 0 || s.offset < kHeaderBytes || s.offset > file_bytes_ ||
             s.bytes > file_bytes_ - s.offset) {
             err = path + ": section '" + s.name + "' lies outside the file or is misaligned";
@@ -317,6 +319,51 @@ bool ModelFile::open(const std::string& path, std::string& err) {
         sections_.push_back(std::move(s));
     }
     return true;
+}
+
+std::string ModelFile::expert_profile_identity() const {
+    // A Basalt pack's section list varies by artifact and model family.
+    // Bind to ALL immutable payload section hashes, not a guessed set of
+    // fixed section names. The optional profile is a derived artifact and
+    // is deliberately excluded to avoid circular identity dependence.
+    if (!find("meta")) return {};
+    std::vector<const Section*> inputs;
+    bool weights = false;
+    for (const Section& section : sections_) {
+        if (section.bytes == 0 || section.name == "profile" ||
+            section.name == "expert_profile" || section.name == "learned-profile")
+            continue;
+        const bool weight_section = section.name == "experts" ||
+            section.name == "dense" || section.name == "gguf" ||
+            section.name == "weights" || section.name.find("expert") != std::string::npos ||
+            section.name.find("tensor") != std::string::npos;
+        if (weight_section) weights = true;
+        bool digest_present = false;
+        for (const uint8_t b : section.sha256) digest_present |= b != 0;
+        if (!digest_present) return {};  // no trustworthy packed hash
+        inputs.push_back(&section);
+    }
+    if (!weights) return {};
+    std::sort(inputs.begin(), inputs.end(), [](const Section* a, const Section* b) {
+        return a->name < b->name;
+    });
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string out = "basalt-model-sections-v2\n";
+    for (const Section* section : inputs) {
+        out += section->name;
+        out += ":";
+        out += std::to_string(section->bytes);
+        out += ":";
+        for (const uint8_t b : section->sha256) {
+            out.push_back(hex[b >> 4]);
+            out.push_back(hex[b & 15]);
+        }
+        out.push_back('\n');
+    }
+    basalt::core::aei::Sha256 digest;
+    digest.update(out);
+    return "basalt-model-sha256-v3:" +
+           basalt::core::aei::Sha256::hex(digest.finish()) + "\n";
 }
 
 const ModelFile::Section* ModelFile::find(const std::string& name) const {

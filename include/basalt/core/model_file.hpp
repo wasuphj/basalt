@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,7 @@ public:
         std::string name;
         uint64_t offset = 0;
         uint64_t bytes = 0;
+        std::array<uint8_t, 32> sha256{};
     };
 
     /// Opens `path`: checks the magic, the version, the size and every section's bounds, and reads the table.
@@ -93,6 +95,9 @@ public:
     const std::string& path() const { return path_; }
     uint64_t file_bytes() const { return file_bytes_; }
     const std::vector<Section>& sections() const { return sections_; }
+    // Identity derived from the packed model's signed-off section hashes.
+    // Empty when mandatory sections are absent; does not reread huge tensors.
+    std::string expert_profile_identity() const;
     const Section* find(const std::string& name) const;
     /// The section as a range of the file; an empty range when there is no such section.
     FileRange range(const std::string& name) const;

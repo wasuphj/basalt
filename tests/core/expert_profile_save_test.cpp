@@ -73,6 +73,59 @@ int main() {
     check(!basalt::core::write_expert_profile(path, L, E, {{3, 0}}, err), "a pair out of range is refused");
     check(basalt::core::read_expert_profile(basalt::core::FileRange(path), L, E, back, slots, err) && back == r0,
           "a refused save keeps the file");
+    check(!basalt::core::write_expert_profile(path, L, E, {{0, 1}, {0, 1}}, err),
+          "duplicate pairs cannot be saved");
+    check(basalt::core::read_expert_profile(basalt::core::FileRange(path), L, E, back, slots, err) && back == r0,
+          "duplicate save leaves the existing profile intact");
+
+    // Mutate a valid profile on disk and check every integrity guard.
+    auto write_bytes = [&](const std::vector<uint8_t>& bytes) {
+        std::FILE* out = std::fopen(path.c_str(), "wb");
+        if (out == nullptr) return false;
+        const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), out) == bytes.size();
+        return std::fclose(out) == 0 && ok;
+    };
+    auto rejected = [&](const std::vector<uint8_t>& bytes, const char* name) {
+        check(write_bytes(bytes), "fixture was written");
+        std::vector<Pair> result;
+        int64_t claimed = 0;
+        check(!basalt::core::read_expert_profile(basalt::core::FileRange(path), L, E, result, claimed, err),
+              name);
+    };
+    check(basalt::core::write_expert_profile(path, L, E, r, err), "restored good profile for corruption tests");
+    std::vector<uint8_t> original(want.size());
+    if (std::FILE* in = std::fopen(path.c_str(), "rb")) {
+        original.resize(std::fread(original.data(), 1, original.size(), in));
+        std::fclose(in);
+    }
+    check(original == want, "corruption fixture matches reference");
+    if (original.size() == want.size()) {
+        auto bad = original;
+        bad[0] = 2;
+        rejected(bad, "unknown profile version rejected");
+        bad = original;
+        bad.resize(bad.size() - 1);
+        rejected(bad, "truncated rank table rejected");
+        bad = original;
+        bad.push_back(0);
+        rejected(bad, "trailing bytes rejected");
+        bad = original;
+        // Ranked pairs start after five u32 header fields.
+        bad[24] = bad[20];
+        bad[25] = bad[21];
+        bad[26] = bad[22];
+        bad[27] = bad[23];
+        rejected(bad, "duplicate expert rank rejected");
+        bad = original;
+        bad.back() ^= 1;
+        rejected(bad, "inconsistent rank table rejected");
+        bad = original;
+        bad[12] = 255;
+        rejected(bad, "oversized claimed slots rejected");
+    }
+    check(write_bytes(original), "valid profile restored after corruptions");
+    check(basalt::core::read_expert_profile(basalt::core::FileRange(path), L, E, back, slots, err) &&
+              back == r && slots == 12, "valid profile still reads after rejection cases");
     std::filesystem::remove_all(dir);
     if (fails == 0) std::puts("expert_profile_save_test: OK");
     return fails == 0 ? 0 : 1;
