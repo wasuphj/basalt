@@ -288,7 +288,22 @@ class ContextLifecycle:
             self.svc.fifo.release()
 
     def _cool_one(self, cid: str) -> None:
-        detail = self.ad._call("GET", f"/v1/contexts/{cid}", None, None, (200,))
+        try:
+            detail = self.ad._call("GET", f"/v1/contexts/{cid}", None, None, (200,))
+        except RegistryError as e:
+            if e.status != 404:
+                raise
+            # the registry has already lost this context (a GC purge, a registry restart): there is no
+            # HOT row to cool into. Forget it locally, or the reaper retries it forever and its engine
+            # copy holds RAM; queue the payload so drain_drops frees the engine side and confirms.
+            with self.lock:
+                self.hot.pop(cid, None)
+                self.hot_pos.pop(cid, None)
+                if self.live_id == cid:
+                    self.live_id = None
+                self.drops.add(cid)
+            print(f"[server] context: {cid[:8]} gone from the registry; forgotten, payload queued", flush=True)
+            return
         state = detail.get("state")
         if state not in ("HOT", "COOLING"):
             with self.lock:
