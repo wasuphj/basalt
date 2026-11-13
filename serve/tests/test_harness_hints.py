@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from serve.api import context_proxy
-from serve.api.context_adapter import ContextAdapter
+from serve.api.context_adapter import ContextAdapter, RegistryError
 from serve.api.context_lifecycle import ContextLifecycle
 from serve.frontend import ChatTemplate
 from serve.handler import serve
@@ -115,6 +115,45 @@ class HintTests(unittest.TestCase):
         m = self.lc.hint_metrics()
         self.assertEqual({i["resume_probability"] for i in m["active"].values()}, {0.0, 1.0})
         self.assertEqual(m["counters"]["deferral_rounds"], 2)
+
+
+class ReaperForgetTests(unittest.TestCase):
+    """A registry 404 during cooling means the row is gone for good: forget it, or the reaper spins forever."""
+
+    def setUp(self):
+        patcher = mock.patch.dict("os.environ", {"BASALT_CONTEXT_COOL_IDLE_S": "600"}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        svc = SimpleNamespace(loaded=lambda: True, fifo=_Fifo(), engine=object())
+        self.lc = ContextLifecycle(svc, ContextAdapter("http://registry"))
+        self.lc.hot[CID] = {"used": time.monotonic() - 700.0, "gen": 1}
+        self.lc.hot_pos[CID] = ("thread-1", 4096)
+        self.lc.live_id = CID
+
+    def _registry_answer(self, status):
+        def call(method, path, payload, idem, ok):
+            if status == 404:
+                raise RegistryError("context_not_found", 404)
+            raise RegistryError("registry_unavailable", status)
+        patcher = mock.patch.object(self.lc.ad, "_call", side_effect=call)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_registry_404_forgets_the_context_and_queues_the_engine_drop(self):
+        self._registry_answer(404)
+        self.lc._cool_idle()
+        self.assertEqual(self.lc.hot, {})
+        self.assertEqual(self.lc.hot_pos, {})
+        self.assertIsNone(self.lc.live_id)
+        self.assertEqual(self.lc.drops, {CID})
+        self.lc._cool_idle()                          # the next round has nothing left to retry
+        self.assertEqual(self.lc.drops, {CID})
+
+    def test_transient_registry_failure_still_retries(self):
+        self._registry_answer(503)
+        self.lc._cool_idle()
+        self.assertIn(CID, self.lc.hot)               # unreachable registry: cool again next round
+        self.assertEqual(self.lc.drops, set())
 
 
 class HintRouteTests(unittest.TestCase):
