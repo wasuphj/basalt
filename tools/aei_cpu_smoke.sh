@@ -12,9 +12,10 @@ for test_src in tests/core/aei_*_test.cpp; do
   [[ -f "$test_src" ]] || continue
   name="$(basename "$test_src" .cpp)"
   extra=()
-  if [[ "$name" == "aei_writer_test" ]]; then
-    extra=(src/platform/aei_trace_writer.cpp src/platform/file.cpp)
-  fi
+  case "$name" in
+    aei_writer_test) extra=(src/platform/aei_trace_writer.cpp src/platform/file.cpp) ;;
+    aei_policy_checkpoint_test|aei_profile_binding_test) extra=(src/platform/file.cpp) ;;
+  esac
   echo "AEI CPU compile: $name"
   "$compiler" "${common[@]}" "$test_src" "${extra[@]}" -o "$out/$name"
   echo "AEI CPU run: $name"

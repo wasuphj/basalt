@@ -10,7 +10,7 @@ int main() {
                                    (1u << (unsigned)AutoArm::prefetch);
     AutoPolicyController first;
     first.enable(supported);
-    for (int i=0; i<AutoPolicyController::kExploreSamples; ++i)
+    for (uint32_t i=0; i<AutoPolicyController::kExploreSamples; ++i)
         first.observe(128,1280.0,true,256,1600.0);
     CHECK(first.samples(AutoArm::baseline,1)==AutoPolicyController::kExploreSamples);
     const std::string payload=first.checkpoint();
