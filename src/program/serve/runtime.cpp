@@ -53,8 +53,8 @@ void Runtime::stop_aei_trace() {
 }
 
 std::string Runtime::aei_checkpoint_identity() const {
-    if (!model_file || !chosen_cards || chosen_cards->empty()) return {};
-    const std::string model = model_file->expert_profile_identity();
+    if (chosen_cards.empty()) return {};
+    const std::string model = model_file.expert_profile_identity();
     if (model.empty()) return {};
     std::string key = "AEI-EXEC-ENV-1\n" + model;
     key += "gpu=" + o.gpu + "\npeer=" + std::to_string(o.peer_device) +
@@ -64,7 +64,7 @@ std::string Runtime::aei_checkpoint_identity() const {
     key += "adapt=" + std::to_string(o.adapt_every) + ":" +
            std::to_string(o.adapt_swaps) + ":" +
            std::to_string(o.adapt_decay) + "\n";
-    for (const auto& card : *chosen_cards) {
+    for (const auto& card : chosen_cards) {
         key += card.token + ":" + card.name + ":" +
                std::to_string(card.cc_major) + "." +
                std::to_string(card.cc_minor) + ":" +

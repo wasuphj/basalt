@@ -3,6 +3,7 @@
 
 #include "../engine_local.hpp"
 #include "basalt/program/grammar/guard.hpp"
+#include "basalt/program/gpu_select.hpp"
 #include "basalt/platform/system.hpp"
 
 #include <array>
@@ -37,6 +38,7 @@ struct Context {
     std::string& ppl_base;
     std::string& ppl_out;
     basalt::core::ModelFile& model_file;
+    const std::vector<basalt::program::GpuCard>& chosen_cards;
     const bool& peer_streamed_share;
     std::vector<int64_t>& split_at;
     std::vector<int>& split_devs;
