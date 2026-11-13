@@ -139,6 +139,7 @@ class Service:
         self.reasoning_budget_tokens = 0                 # default thinking budget (0: none)
         self.answer_room = True                          # reserve output space when thinking
         self.thinking_loop_tokens = 256                  # one token repeated this often in the thinking ends it (0: off)
+        self.answer_bang_chars = 256                     # an answer of nothing but "!" this long is a dead model: cut (0: off)
         self.anthropic_think_unasked = True               # "anthropic_thinking": "on_request" -> False
         self.stop_ids = set(tokenizer.encode(IM_END, parse_special=True) +
                             tokenizer.encode("<|endoftext|>", parse_special=True))
@@ -1107,6 +1108,7 @@ class Service:
                     prompt, thought = ids, 0            # reasoning tokens so far
                     closed_early = False                # the thinking was already closed once
                     run_id, run_n = None, 0             # the token the thinking is repeating, and how often in a row
+                    bang_n = 0                          # "!" characters in a row in the answer
                     for ev in opening:
                         yield "event", ev
                     while True:
@@ -1155,6 +1157,10 @@ class Service:
                                     run_n = 0
                                 thinking_n += parser.state == "reasoning"
                                 piece = detok.push(t)
+                                if parser.state != "content":
+                                    bang_n = 0
+                                elif piece:
+                                    bang_n = bang_n + len(piece) if not piece.strip("!") else 0
                                 tail = (tail + piece)[-2:]
                                 evs = cut(parser.feed(piece))
                                 self._note(n, evs, st, rate)
@@ -1178,6 +1184,10 @@ class Service:
                                 if (self.thinking_loop_tokens and run_n >= self.thinking_loop_tokens
                                         and parser.state == "reasoning" and not parser.buf and not detok.pending()):
                                     wrap = looped = True
+                                    break
+                                if self.answer_bang_chars and bang_n >= self.answer_bang_chars:
+                                    print(f"[server] the answer is {bang_n} \"!\" in a row, cutting it", flush=True)
+                                    finish = "length"       # gen.close() below STOPs the engine
                                     break
                                 if budget and parser.state == "reasoning":
                                     thought += 1

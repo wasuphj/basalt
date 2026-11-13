@@ -38,7 +38,9 @@ keep their existing behavior. Reserved space reduces empty answers but does not 
 When the model repeats one token 256 times in a row inside its thinking, the server ends the thinking with the
 template's own close (`\n</think>\n\n`) and the model answers. The reply's `finish_reason` stays honest: `stop` when
 the answer completes, `length` only at `max_tokens`. The server logs `thinking repeated one token N times, ending it`.
-Only the thinking is watched; separators, padding, base64 and digit strings in an answer are never cut. Set
+Only the thinking is watched for repeats; separators, padding, base64 and digit strings in an answer are never cut.
+The one exception is a dead model: an answer made of nothing but `!` for 256 characters in a row is cut with
+`finish_reason` `length` (the server logs `the answer is N "!" in a row, cutting it`). Set
 [`thinking-loop-tokens`](index.md#server) to another count, or `0` to turn the safeguard off.
 
 ### The model file's sampling defaults
