@@ -7,6 +7,7 @@ int dispatch(Context& context) {
     auto& ppl_base = *context.ppl_base;
     auto& ppl_out = *context.ppl_out;
     auto& model_file = *context.model_file;
+    auto& chosen_cards = *context.chosen_cards;
     auto& peer_streamed_share = *context.peer_streamed_share;
     auto& split_at = *context.split_at;
     auto& split_devs = *context.split_devs;
@@ -132,6 +133,7 @@ int dispatch(Context& context) {
             .ppl_base = ppl_base,
             .ppl_out = ppl_out,
             .model_file = model_file,
+            .chosen_cards = chosen_cards,
             .peer_streamed_share = peer_streamed_share,
             .split_at = split_at,
             .split_devs = split_devs,

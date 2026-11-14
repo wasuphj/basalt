@@ -1,4 +1,6 @@
 #include "common.hpp"
+#include "expert_plan.hpp"
+#include "basalt/core/aei_stage_metrics.hpp"
 #include "basalt/core/load_progress.hpp"
 #include "basalt/core/verify.hpp"
 #include "basalt/core/remote_expert_opt.hpp"
@@ -267,6 +269,35 @@ void Verifier::collect_profile() {
             if (x == 0 || x < prev) continue;
             prof_sum_[kind][i] += (double) (x - prev);
             prev = x;
+        }
+        // CUDA publishes the complete mapped router kinds before the
+        // doorbell. Kind 1 denotes GPU-staged CPU-tier Experts.
+        // n_cpu is the REMAINING CPU entry count after staging, not the
+        // number of unique GPU-stage groups. Count groups from IDs.
+        if (dm_ && dm_->stage_k && dm_->h_ring &&
+            l >= lb_ && l < le_) {
+            const auto& ring = dm_->h_ring[(size_t)(l-lb_)];
+            const uint64_t entries = ring.n_tok > 0 && ss_->k > 0
+                ? (uint64_t)ring.n_tok * (uint64_t)ss_->k : 0;
+            if (ring.layer == l && entries > 0 &&
+                entries <= (uint64_t)basalt::kernels::kDmCap) {
+                const uint32_t staged = aei::staged_expert_groups(
+                    ring.ids, ring.kind, (size_t)entries, (uint32_t)g.n_expert);
+                const double elapsed = gap(at(l,22),at(l,21));
+                if (staged > 0 && elapsed >= (double)staged &&
+                    elapsed <= 1e12) {
+                    const uint64_t cost = (uint64_t)(elapsed / staged);
+                    if (dm_->gpu_stage_observations == 0)
+                        dm_->gpu_stage_ns_per_expert = cost;
+                    else {
+                        uint64_t& old = dm_->gpu_stage_ns_per_expert;
+                        if (cost >= old) old += (cost - old) / 8;
+                        else old -= (old - cost) / 8;
+                    }
+                    if (dm_->gpu_stage_observations < UINT32_MAX)
+                        ++dm_->gpu_stage_observations;
+                }
+            }
         }
         if (l + 1 < L) prof_sum_[kind][25] += gap(at(l + 1, 0), at(l, 24));
         const double dn = gap(at(l, 27), at(l, 0)), dd = gap(at(l, 28), at(l, 27)), du = gap(at(l, 1), at(l, 28));

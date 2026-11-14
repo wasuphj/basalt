@@ -4,12 +4,14 @@
 namespace basalt::program::serve {
 
 Flow Request::complete() {
-    decode_ms = std::chrono::duration<double, std::milli>(Clock::now() - d0).count();
     // the last commit (set_commit_async): the session is complete before anything reads or copies it
     if (!runtime_.ver.wait_commit(runtime_.err) || (runtime_.pipe_on && !runtime_.ver_b.wait_commit(runtime_.err))) {
         std::printf("ERR %s\n", runtime_.err.c_str());
         return Flow::error;
     }
+    // Include the final asynchronous GPU commit in request decode latency.
+    // AEI must never mistake unfinished device work for a speedup.
+    decode_ms = std::chrono::duration<double, std::milli>(Clock::now() - d0).count();
     if (runtime_.pipe_on)
         basalt::log::info("basalt serve", "pipelined windows: %lld launched, %lld held", (long long) pair_runs,
                           (long long) pair_holds);
@@ -291,6 +293,14 @@ Flow Request::complete() {
                      (double) (runtime_.remote_experts[(size_t) r].full_row_bytes() - full_before[(size_t) r]) / 1048576.0,
                      runtime_.remote_experts[(size_t) r].ms_begin() - begin_before[(size_t) r],
                      runtime_.remote_experts[(size_t) r].ms_wait() - wait_before[(size_t) r]);
+
+    // The policy FSM consumes only successfully completed decode metrics.
+    // It proposes the next request's policy; never changes CUDA state here.
+    if (runtime_.admit_slot < 0) {
+        runtime_.aei_record_auto_request(
+            produced_n, decode_ms, read_n, prompt_ms,
+            !cancelled && !ram_out && kv_stop.empty() && produced_n > 0);
+    }
 
     return Flow::next;
 }

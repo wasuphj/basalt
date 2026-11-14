@@ -81,7 +81,324 @@ Flow Runtime::dispatch() {
     }
     if (line.rfind("PROBE", 0) == 0) {   // between requests, not a request (basalt-probe's commands)
         std::string perr;
-        if (line.rfind("PROBE set ", 0) == 0) {   // PROBE set workers=K share=F: live values for the next requests
+        if (line.rfind("PROBE baseline residents ", 0) == 0) {
+            if (aei_export_baseline_residents(
+                    line.substr(std::string("PROBE baseline residents ").size()), perr))
+                std::printf("PROBE baseline residents saved\n");
+        } else if (line == "PROBE policy auto on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (aei_enable_automatic(perr))
+                    std::printf("PROBE policy auto on phase=explore arm=baseline\n");
+            }
+        } else if (line == "PROBE policy auto off") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE auto: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, perr)) {
+                    aei_auto.disable();
+                    // Observers were detached by aei_apply_auto_policy.
+                    // Unlike an audit, an explicit OFF releases the retained
+                    // models to return all optional metadata to baseline.
+                    aei_rank_costs.reset();
+                    aei_reuse_index.reset();
+                    aei_prefetch.reset();
+                    aei_split_costs.reset();
+                    aei_split_last_cpu_ns = 0;
+                    std::printf("PROBE policy auto off arm=baseline\n");
+                }
+            }
+        } else if (line == "PROBE policy auto stats") {
+            std::printf("PROBE policy auto enabled=%d phase=%u active=%s selected=%s applied=%s completed=%u rejected=%u transitions=%u audits=%u\n",
+                aei_auto.enabled() ? 1 : 0, (unsigned)aei_auto.phase(),
+                basalt::core::aei::auto_arm_name(aei_auto.active()),
+                basalt::core::aei::auto_arm_name(aei_auto.selected()),
+                basalt::core::aei::auto_arm_name(aei_auto_applied),
+                aei_auto.completed(), aei_auto.rejected(), aei_auto.transitions(),
+                aei_auto.audits());
+        } else if (line == "PROBE policy split on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE split: inference in flight";
+            else if (aei_rank_costs || aei_reuse_index || aei_prefetch) {
+                perr = "PROBE split: return to baseline before enabling a different policy";
+            } else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (g.n_layers <= 0 ||
+                    g.n_layers > (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers) {
+                    perr = "PROBE split: layer count outside bounded cost model";
+                } else {
+                    if (!aei_split_costs)
+                        aei_split_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+                    ver.set_aei_cost_placement_probe(aei_split_costs.get());
+                    ver_b.set_aei_cost_placement_probe(aei_split_costs.get());
+                    std::printf("PROBE policy split on: measuring CPU misses\n");
+                }
+            }
+        } else if (line == "PROBE policy split refresh") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE split: inference in flight";
+            else if (!aei_split_costs) perr = "PROBE split: not enabled";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                std::string e0, e1;
+                const bool have0 = ver.aei_staged_split_available();
+                const bool have1 = ver_b.aei_staged_split_available();
+                const bool ok0 = !have0 || ver.aei_update_staged_split(aei_split_costs.get(), false, e0);
+                const bool ok1 = !have1 || ver_b.aei_update_staged_split(aei_split_costs.get(), false, e1);
+                if ((!have0 && !have1) || !ok0 || !ok1) {
+                    std::string ignored;
+                    if (have0 && ok0) (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    if (have1 && ok1) (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                    perr = !have0 && !have1 ? "PROBE split: no available staging path"
+                        : "PROBE split: " + (ok0 ? e1 : e0);
+                } else {
+                    aei_split_last_cpu_ns = aei_split_costs->reference_cost_ns((size_t)g.n_layers);
+                    std::printf("PROBE policy split updated cpu_ns=%llu dma_ns=%llu/%llu gpu_staged_ns=%llu/%llu\n",
+                        (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
+                        (unsigned long long)ver.aei_staged_dma_ns(),
+                        (unsigned long long)ver_b.aei_staged_dma_ns(),
+                        (unsigned long long)ver.aei_staged_gpu_ns(),
+                        (unsigned long long)ver_b.aei_staged_gpu_ns());
+                }
+            }
+        } else if (line == "PROBE policy prefetch on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
+            if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
+            else
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                const uint64_t total = (uint64_t)g.n_layers * (uint64_t)g.n_expert;
+                if (!total || total > basalt::core::aei::NextExpertPrefetch::kMaxExperts) {
+                    perr = "PROBE policy: model geometry exceeds bounded predictor";
+                } else {
+                    ver.set_aei_cost_placement_probe(nullptr);
+                    ver_b.set_aei_cost_placement_probe(nullptr);
+                    aei_rank_costs.reset();
+                    ver.set_aei_reuse_probe(nullptr, 0);
+                    ver_b.set_aei_reuse_probe(nullptr, 0);
+                    aei_reuse_index.reset();
+                    if (!aei_prefetch)
+                        aei_prefetch = std::make_unique<basalt::core::aei::NextExpertPrefetch>((size_t)total);
+                    ver.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+                    ver_b.set_aei_predictive_prefetch(aei_prefetch.get(), (uint32_t)g.n_expert);
+                    sp.set_aei_predictive_prefetch(aei_prefetch.get());
+                    if (!aei_hint_worker) aei_start_prefetch_io();
+                    std::printf("PROBE policy prefetch on metadata_bytes=%zu\n",
+                                aei_prefetch->metadata_bytes());
+                }
+            }
+        } else if (line == "PROBE policy reuse on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
+            if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
+            else
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                const uint64_t total = (uint64_t)g.n_layers * (uint64_t)g.n_expert;
+                if (!total || total > basalt::core::aei::ExpertReuseIndex::kMaximumExperts)
+                    perr = "PROBE policy: model geometry exceeds bounded reuse index";
+                else {
+                    ver.set_aei_predictive_prefetch(nullptr, 0);
+                    ver_b.set_aei_predictive_prefetch(nullptr, 0);
+                    sp.set_aei_predictive_prefetch(nullptr);
+                    aei_stop_prefetch_io();
+                    aei_prefetch.reset();
+                    // Policy choices are mutually exclusive; keep an unambiguous A/B.
+                    ver.set_aei_cost_placement_probe(nullptr);
+                    ver_b.set_aei_cost_placement_probe(nullptr);
+                    aei_rank_costs.reset();
+                    if (!aei_reuse_index)
+                        aei_reuse_index = std::make_unique<basalt::core::aei::ExpertReuseIndex>((size_t)total);
+                    ver.set_aei_reuse_probe(aei_reuse_index.get(), (uint32_t)g.n_expert);
+                    ver_b.set_aei_reuse_probe(aei_reuse_index.get(), (uint32_t)g.n_expert);
+                    std::printf("PROBE policy reuse on metadata_bytes=%zu\n",
+                                aei_reuse_index->metadata_bytes());
+                }
+            }
+        } else if (line == "PROBE policy cost on") {
+            if (aei_auto.enabled()) perr = "PROBE policy: auto controller owns this policy";
+            else
+            if (aei_split_costs) perr = "PROBE policy: return split to baseline first";
+            else
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (g.n_layers <= 0 || g.n_layers > (int64_t)basalt::core::aei::LayerCostRank::kMaxLayers)
+                    perr = "PROBE policy: layer count exceeds bounded model";
+                else {
+                    ver.set_aei_reuse_probe(nullptr, 0);
+                    ver_b.set_aei_reuse_probe(nullptr, 0);
+                    aei_reuse_index.reset();
+                    ver.set_aei_predictive_prefetch(nullptr, 0);
+                    ver_b.set_aei_predictive_prefetch(nullptr, 0);
+                    sp.set_aei_predictive_prefetch(nullptr);
+                    aei_stop_prefetch_io();
+                    aei_prefetch.reset();
+                    if (!aei_rank_costs)
+                        aei_rank_costs = std::make_unique<basalt::core::aei::LayerCostRank>();
+                    ver.set_aei_cost_placement_probe(aei_rank_costs.get());
+                    ver_b.set_aei_cost_placement_probe(aei_rank_costs.get());
+                    std::printf("PROBE policy cost on reference_ns=%llu\n",
+                        (unsigned long long)aei_rank_costs->reference_cost_ns((size_t)g.n_layers));
+                }
+            }
+        } else if (line == "PROBE policy baseline") {
+            if (aei_auto.enabled()) perr = "PROBE policy: use 'PROBE policy auto off' first";
+            else
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE policy: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                ver.set_aei_cost_placement_probe(nullptr);
+                ver_b.set_aei_cost_placement_probe(nullptr);
+                aei_rank_costs.reset();
+                ver.set_aei_reuse_probe(nullptr, 0);
+                ver_b.set_aei_reuse_probe(nullptr, 0);
+                aei_reuse_index.reset();
+                ver.set_aei_predictive_prefetch(nullptr, 0);
+                ver_b.set_aei_predictive_prefetch(nullptr, 0);
+                sp.set_aei_predictive_prefetch(nullptr);
+                aei_stop_prefetch_io();
+                aei_prefetch.reset();
+                if (aei_split_costs) {
+                    std::string ignored;
+                    if (ver.aei_staged_split_available())
+                        (void)ver.aei_update_staged_split(nullptr, true, ignored);
+                    if (ver_b.aei_staged_split_available())
+                        (void)ver_b.aei_update_staged_split(nullptr, true, ignored);
+                    ver.set_aei_cost_placement_probe(nullptr);
+                    ver_b.set_aei_cost_placement_probe(nullptr);
+                    aei_split_costs.reset();
+                    aei_split_last_cpu_ns = 0;
+                }
+                std::printf("PROBE policy baseline\n");
+            }
+        } else if (line == "PROBE policy stats") {
+            if (aei_split_costs) {
+                std::printf("PROBE policy split cpu_ns=%llu dma_ns=%llu/%llu gpu_staged_ns=%llu/%llu\n",
+                            (unsigned long long)aei_split_costs->reference_cost_ns((size_t)g.n_layers),
+                            (unsigned long long)ver.aei_staged_dma_ns(),
+                            (unsigned long long)ver_b.aei_staged_dma_ns(),
+                            (unsigned long long)ver.aei_staged_gpu_ns(),
+                            (unsigned long long)ver_b.aei_staged_gpu_ns());
+            } else if (aei_prefetch) {
+                std::printf("PROBE policy prefetch metadata_bytes=%zu dropped_samples=%llu evaluated=%llu correct=%llu hit_ema_pct=%u\n",
+                            aei_prefetch->metadata_bytes(),
+                            (unsigned long long)aei_prefetch->dropped_samples(),
+                            (unsigned long long)aei_prefetch->evaluated(),
+                            (unsigned long long)aei_prefetch->correct(),
+                            aei_prefetch->hit_ema_percent());
+            } else if (aei_reuse_index) {
+                std::printf("PROBE policy reuse metadata_bytes=%zu\n", aei_reuse_index->metadata_bytes());
+            } else if (!aei_rank_costs) perr = "PROBE policy: baseline";
+            else {
+                std::printf("PROBE policy cost reference_ns=%llu\n",
+                    (unsigned long long)aei_rank_costs->reference_cost_ns((size_t)g.n_layers));
+            }
+        } else if (line == "PROBE cost on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (!aei_cpu_costs) aei_cpu_costs = std::make_unique<basalt::core::aei::ShadowScheduler>();
+                ver.set_aei_cpu_cost_probe(aei_cpu_costs.get());
+                ver_b.set_aei_cpu_cost_probe(aei_cpu_costs.get());
+                std::printf("PROBE cost on\n");
+            }
+        } else if (line == "PROBE cost off") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                ver.set_aei_cpu_cost_probe(nullptr);
+                ver_b.set_aei_cpu_cost_probe(nullptr);
+                aei_cpu_costs.reset();
+                std::printf("PROBE cost off\n");
+            }
+        } else if (line == "PROBE cost report") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE cost: inference in flight";
+            else if (!aei_cpu_costs) perr = "PROBE cost: not enabled";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                for (size_t b = 0; b < basalt::core::aei::ShadowScheduler::kBuckets; ++b) {
+                    const uint32_t n = (uint32_t) 1 << b;
+                    const auto cpu = aei_cpu_costs->estimate(basalt::core::aei::Device::cpu, n);
+                    std::printf("AEI_COST cpu %u %u %llu\n", n, cpu.observations,
+                                (unsigned long long)cpu.execution_ns);
+                }
+                std::printf("PROBE cost end dropped_samples=%llu\n",
+                            (unsigned long long)aei_cpu_costs->dropped_samples());
+            }
+        } else if (line.rfind("PROBE trace file ", 0) == 0) {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
+            else if (aei_trace_writer) perr = "PROBE trace: file writer already active";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                const std::string path = line.substr(17);
+                if (path.empty()) perr = "PROBE trace file: missing output path";
+                else {
+                    if (!aei_trace) aei_trace = std::make_unique<basalt::core::aei::RouterEventBuffer>();
+                    auto writer = std::make_unique<basalt::platform::AeiTraceWriter>();
+                    if (!writer->start(path, *aei_trace, perr)) {
+                        // Preserve any prior ring/diagnostics on startup error.
+                    } else {
+                        aei_trace_writer = std::move(writer);
+                        sp.set_aei_router_trace(aei_trace.get());
+                        std::printf("PROBE trace file on capacity=%zu\n",
+                                    basalt::core::aei::RouterEventBuffer::kCapacity);
+                    }
+                }
+            }
+        } else if (line == "PROBE trace stats") {
+            if (!aei_trace) perr = "PROBE trace: not enabled";
+            else {
+                std::printf("PROBE trace stats dropped_capacity=%llu dropped_contention=%llu written=%llu io_errors=%llu\n",
+                            (unsigned long long)aei_trace->dropped_capacity(),
+                            (unsigned long long)aei_trace->dropped_contention(),
+                            (unsigned long long)(aei_trace_writer ? aei_trace_writer->written() : 0),
+                            (unsigned long long)(aei_trace_writer ? aei_trace_writer->io_errors() : 0));
+            }
+        } else if (line == "PROBE trace on") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (!aei_trace) aei_trace = std::make_unique<basalt::core::aei::RouterEventBuffer>();
+                sp.set_aei_router_trace(aei_trace.get());
+                std::printf("PROBE trace on capacity=%zu\n",
+                            basalt::core::aei::RouterEventBuffer::kCapacity);
+            }
+        } else if (line == "PROBE trace off") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                stop_aei_trace();
+                std::printf("PROBE trace off\n");
+            }
+        } else if (line == "PROBE trace drain") {
+            if (batch_on() || (piped && pipe_inflight())) perr = "PROBE trace: inference in flight";
+            else {
+                if (ba_job) { ba_thr.join(); ba_job = false; }
+                if (!aei_trace) perr = "PROBE trace: not enabled";
+                else if (aei_trace_writer) perr = "PROBE trace: file writer owns the drain";
+                else {
+                    std::array<basalt::core::aei::RoutedExpertEvent, 128> events{};
+                    const size_t count = aei_trace->drain(events.data(), events.size());
+                    for (size_t i = 0; i < count; ++i) {
+                        const auto& e = events[i];
+                        std::printf("AEI %llu %llu %u %u\n",
+                                    (unsigned long long)e.stream,
+                                    (unsigned long long)e.sequence,
+                                    (unsigned)e.layer, (unsigned)e.expert);
+                    }
+                    std::printf("PROBE trace end count=%zu dropped_capacity=%llu dropped_contention=%llu\n",
+                                count, (unsigned long long)aei_trace->dropped_capacity(),
+                                (unsigned long long)aei_trace->dropped_contention());
+                }
+            }
+        } else if (line.rfind("PROBE set ", 0) == 0) {   // PROBE set workers=K share=F: live values for the next requests
             if (batch_on()) perr = "PROBE: not while batch slots are decoding";
             else {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -102,7 +419,7 @@ Flow Runtime::dispatch() {
                 if (ba_job) { ba_thr.join(); ba_job = false; }
                 (void) probe_adapt(line, perr);
             }
-        } else if (line != "PROBE rates") perr = "PROBE: expected PROBE rates, PROBE set or PROBE adapt";
+        } else if (line != "PROBE rates") perr = "PROBE: expected rates, set, adapt, trace, cost or policy";
         else if (batch_on()) perr = "PROBE: not while batch slots are decoding";
         else {
             if (ba_job) { ba_thr.join(); ba_job = false; }
@@ -328,6 +645,17 @@ Flow Runtime::dispatch() {
         ~BusyScope() { basalt::core::progress().busy.store(false); basalt::core::progress_at("idle"); }
     } busy_scope;
     const BusyClock busy(busy_s, busy_on, busy_from);
+    if (aei_auto.enabled() && aei_auto.active() != aei_auto_applied) {
+        std::string policy_error;
+        if (!aei_apply_auto_policy(aei_auto.active(), policy_error)) {
+            basalt::log::warn("basalt serve", "AEI auto policy transition refused: %s",
+                              policy_error.c_str());
+            aei_auto.failed_transition();
+            std::string ignored;
+            if (!aei_apply_auto_policy(basalt::core::aei::AutoArm::baseline, ignored))
+                basalt::log::warn("basalt serve", "AEI auto rollback: %s", ignored.c_str());
+        }
+    }
     Request request(*this);
     return request.execute();
 }

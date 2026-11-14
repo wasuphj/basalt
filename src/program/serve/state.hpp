@@ -23,6 +23,8 @@
 #include "basalt/core/host_pool.hpp"
 #include "basalt/core/pinned.hpp"
 #include "basalt/platform/file.hpp"
+#include "basalt/platform/aei_trace_writer.hpp"
+#include "basalt/platform/aei_prefetch_worker.hpp"
 #include "basalt/platform/memory.hpp"
 #include "basalt/platform/process.hpp"
 #include "basalt/platform/system.hpp"
@@ -49,6 +51,7 @@
 #include "basalt/kernels/mrope.hpp"
 #include "basalt/core/native_head.hpp"
 #include "basalt/core/verify.hpp"
+#include "basalt/core/aei_auto_policy.hpp"
 #include "basalt/core/mtp.hpp"
 #include "basalt/prefill/gemm.hpp"
 #include "basalt/prefill/prefill.hpp"
@@ -208,6 +211,21 @@ private:
     int32_t* d_hist{};
     std::vector<int32_t> hist_stage{};
     int hist_dev{};
+    // Opt-in research telemetry. Allocated only by PROBE trace on at idle.
+    std::unique_ptr<basalt::core::aei::RouterEventBuffer> aei_trace{};
+    std::unique_ptr<basalt::core::aei::ShadowScheduler> aei_cpu_costs{};
+    std::unique_ptr<basalt::core::aei::LayerCostRank> aei_rank_costs{};
+    std::unique_ptr<basalt::core::aei::ExpertReuseIndex> aei_reuse_index{};
+    std::unique_ptr<basalt::core::aei::PrefetchHintQueue> aei_hint_queue{};
+    std::unique_ptr<basalt::platform::AeiPrefetchWorker> aei_hint_worker{};
+    std::unique_ptr<basalt::core::aei::NextExpertPrefetch> aei_prefetch{};
+    std::unique_ptr<basalt::core::aei::LayerCostRank> aei_split_costs{};
+    uint64_t aei_split_last_cpu_ns = 0;
+    uint32_t aei_checkpoint_saved_at = 0;
+    basalt::core::aei::AutoPolicyController aei_auto{};
+    basalt::core::aei::AutoArm aei_auto_applied = basalt::core::aei::AutoArm::baseline;
+    std::unique_ptr<basalt::platform::AeiTraceWriter> aei_trace_writer{};
+    uint64_t aei_trace_next_stream = 1;
     basalt::core::Verifier ver{};
     basalt::core::VerifyHits vh{};
     // Layer split: `ver` runs layers [0, K1) and hands its residual to the next stage's verifier, and so on; the
@@ -523,6 +541,8 @@ private:
     bool adapt_peers(const std::vector<int32_t>& r0, std::string& perr);
     void apply_pending(bool wait, bool exchanges = true);
     void rank_swaps(std::vector<Swap>& swaps, bool across);
+    void aei_prefetch_predicted_sources(const std::vector<Swap>& swaps);
+    bool aei_export_baseline_residents(const std::string& path, std::string& err);
     void rank_once(std::vector<Swap>& swaps, size_t room);
     bool adapt();
     void xq_settle();
@@ -586,6 +606,16 @@ private:
     int init_batch();
     int run_requests();
     Flow dispatch();
+    // Safe for idle PROBE off and QUIT/EOF paths; joins writer before deleting ring.
+    void stop_aei_trace();
+    void aei_start_prefetch_io();
+    void aei_stop_prefetch_io();
+    bool aei_apply_auto_policy(basalt::core::aei::AutoArm arm, std::string& err);
+    bool aei_enable_automatic(std::string& err);
+    std::string aei_checkpoint_identity() const;
+    bool aei_save_checkpoint();
+    void aei_record_auto_request(int64_t generated, double decode_ms,
+                                 int64_t fresh_prompt, double prompt_ms, bool healthy);
     int shutdown();
 };
 

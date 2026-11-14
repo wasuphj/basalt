@@ -1,6 +1,7 @@
 #include "basalt/core/host_pool.hpp"
 #include "common.hpp"
 #include "expert_plan.hpp"
+#include "basalt/core/aei_split_plan.hpp"
 #include "basalt/core/load_progress.hpp"
 #include "basalt/core/verify.hpp"
 #include "basalt/core/diag.hpp"
@@ -233,6 +234,10 @@ bool Verifier::dm_init(std::string& err) {
         if (!sok) { err = "verify: the staged share's buffers"; return false; }
         std::memset(d->stage_host, 0, (size_t) LE * 8);
         d->stage_gen = warm_src_->places_generation() + 1;   // read at the first batch window
+        std::copy(kt.begin(), kt.end(), d->stage_baseline.begin());
+        std::copy(kt.begin(), kt.end(), d->stage_active.begin());
+        d->stage_slots = stage_slots;
+        d->stage_blob_bytes = (uint64_t)blob;
         d->stage_stride = stride;
         d->stage_blocks = 8;
         d->stage_min = 1;
@@ -247,6 +252,105 @@ bool Verifier::dm_init(std::string& err) {
     basalt::log::info("basalt verify", "the MoE tail planned on the device%s", served.c_str());
     if (d->warm != nullptr)
         basalt::log::info("basalt verify", "the CPU pool warms its likeliest next-layer expert between doorbells");
+    return true;
+}
+
+bool Verifier::aei_staged_split_available() const noexcept {
+    return dm_ && dm_->stage_k && dm_->st_s && dm_->stage_slots > 0;
+}
+
+uint64_t Verifier::aei_staged_dma_ns() const {
+    return dm_ ? dm_->stage_dma_ns : 0;
+}
+
+uint64_t Verifier::aei_staged_gpu_ns() const {
+    return dm_ && dm_->gpu_stage_observations >= 8
+        ? dm_->gpu_stage_ns_per_expert : 0;
+}
+
+bool Verifier::aei_update_staged_split(const aei::LayerCostRank* cpu,
+                                      bool baseline, std::string& error) {
+    using namespace basalt::kernels;
+    DecMoe* d = dm_;
+    if (!d || !d->stage_k || !d->st_s || d->stage_slots <= 0) {
+        error = "AEI staged-share is not active for this verifier";
+        return false;
+    }
+    const OnDevice on(device_);
+    // Idle-only API: synchronize both the main and staging streams so that
+    // graph launches cannot observe a partially replaced device LUT.
+    if (cudaStreamSynchronize(cs_) != cudaSuccess ||
+        cudaStreamSynchronize(d->st_s) != cudaSuccess) {
+        error = "AEI cannot synchronize staging streams";
+        return false;
+    }
+    std::array<int32_t, kDmCap + 1> table = d->stage_baseline;
+    if (!baseline) {
+        const uint64_t cpu_ns = cpu ? cpu->reference_cost_ns((size_t)g_->n_layers) : 0;
+        if (!cpu_ns) {
+            error = "AEI CPU per-miss measurements are insufficient";
+            return false;
+        }
+        if (!d->stage_dma_ns) {
+            // The real staging_ allocation holds actual expert weights
+            // and may be reused by subsequent graphs. Never overwrite it
+            // with calibration bytes, even between requests.
+            const size_t bytes = (size_t)d->stage_blob_bytes;
+            if (!bytes || bytes > 16u * 1024u * 1024u) {
+                error = "AEI staging blob is too large for bounded DMA calibration";
+                return false;
+            }
+            void* pinned = nullptr;
+            if (basalt::core::allocate_pinned_host(&pinned, bytes) != cudaSuccess) {
+                error = "AEI DMA calibration could not reserve temporary pinned memory";
+                return false;
+            }
+            void* scratch_device = nullptr;
+            if (cudaMalloc(&scratch_device, bytes) != cudaSuccess) {
+                basalt::core::release_pinned_host(pinned);
+                cudaGetLastError();
+                error = "AEI DMA calibration cannot reserve temporary device memory";
+                return false;
+            }
+            std::memset(pinned, 0, bytes);
+            cudaEvent_t started = nullptr, finished = nullptr;
+            bool ok = cudaEventCreate(&started) == cudaSuccess;
+            if (ok) ok = cudaEventCreate(&finished) == cudaSuccess;
+            float elapsed_ms = 0.0f;
+            if (ok) {
+                ok = cudaEventRecord(started, d->st_s) == cudaSuccess &&
+                     cudaMemcpyAsync(scratch_device, pinned, bytes,
+                                     cudaMemcpyHostToDevice, d->st_s) == cudaSuccess &&
+                     cudaEventRecord(finished, d->st_s) == cudaSuccess &&
+                     cudaEventSynchronize(finished) == cudaSuccess &&
+                     cudaEventElapsedTime(&elapsed_ms, started, finished) == cudaSuccess;
+            }
+            // Even if event submission failed after the memcpy was queued,
+            // do not release either allocation until the stream is idle.
+            if (cudaStreamSynchronize(d->st_s) != cudaSuccess) ok = false;
+            if (started) cudaEventDestroy(started);
+            if (finished) cudaEventDestroy(finished);
+            cudaFree(scratch_device);
+            basalt::core::release_pinned_host(pinned);
+            if (!ok || !(elapsed_ms > 0.0f)) {
+                error = "AEI staging DMA measurement failed";
+                return false;
+            }
+            d->stage_dma_ns = (uint64_t)(elapsed_ms * 1000000.0f);
+            if (!d->stage_dma_ns) d->stage_dma_ns = 1;
+        }
+        const auto updated = aei::plan_staged_split(
+            cpu_ns, d->stage_dma_ns, d->stage_slots, d->stage_min,
+            d->gpu_stage_observations >= 8 ? d->gpu_stage_ns_per_expert : 0);
+        std::copy(updated.staged.begin(), updated.staged.end(), table.begin());
+    }
+    if (cudaMemcpy(d->stage_k, table.data(), sizeof(table),
+                   cudaMemcpyHostToDevice) != cudaSuccess) {
+        error = "AEI failed to update staged-share device lookup";
+        return false;
+    }
+    d->stage_active = table;
+    d->stage_cost_override = !baseline;
     return true;
 }
 

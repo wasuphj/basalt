@@ -1,8 +1,28 @@
 // src/program/serve/tiers.cpp - tiers operations for the persistent engine.
 #include "basalt/core/host_pool.hpp"
 #include "state.hpp"
+#include "basalt/platform/aei_residency_export.hpp"
 
 namespace basalt::program::serve {
+
+bool Runtime::aei_export_baseline_residents(const std::string& path,
+                                           std::string& err) {
+    if (multi_gpu || peer.valid() || remote_opt || xq_across) {
+        err = "PROBE baseline: snapshot requires single-GPU per-layer standard adaptive mode";
+        return false;
+    }
+    if (batch_on() || (piped && pipe_inflight()) || ba_job || !pending.empty()) {
+        err = "PROBE baseline: cache adaptation or requests still in flight";
+        return false;
+    }
+    if (!basalt::platform::aei_export_residents(
+            path, host_res, (size_t)g.n_layers, (size_t)g.n_expert)) {
+        err = "PROBE baseline: failed to export current Expert residents";
+        return false;
+    }
+    return true;
+}
+
 
 // Seeds the adaptive tier's usage counts from the routing of the prompt just read, so the first adaptation rounds
 // of a request already move the experts the new topic uses toward the GPUs.  The earlier usage decays to kSeedKeep and
@@ -141,8 +161,26 @@ void Runtime::apply_pending(bool wait, bool exchanges) {
     promoted.clear();
 }
 
+void Runtime::aei_prefetch_predicted_sources(const std::vector<Swap>& swaps) {
+    if (!aei_prefetch || srcp == nullptr) return;
+    // A bounded hint to the existing mapped-file source: issue read-ahead
+    // before the CUDA swap needs the same host blob. No new GPU copies,
+    // slots, worker pools or allocations on the router's critical path.
+    size_t advised = 0;
+    for (const Swap& swap : swaps) {
+        const size_t flat = (size_t)swap.layer * (size_t)g.n_expert + (size_t)swap.in;
+        if (aei_prefetch->boost(flat) <= 0.0f) continue;
+        srcp->prefetch(swap.layer, swap.in);
+        if (++advised == 8) break;
+    }
+}
+
 void Runtime::rank_swaps(std::vector<Swap>& swaps, bool across) {
     swaps.clear();
+    // Only adjust the cross-layer ranking when at least 25% of layers
+    // have a stable CPU-miss cost estimate. Otherwise bit-for-bit baseline.
+    const uint64_t cost_reference = aei_rank_costs
+        ? aei_rank_costs->reference_cost_ns((size_t) g.n_layers) : 0;
     if (across) {
         // one ranking over every layer: a layer that routes more experts than its slots hold takes the slots of
         // the least-routed experts of any layer, so the slots follow the request's layers; with every layer's
@@ -154,11 +192,22 @@ void Runtime::rank_swaps(std::vector<Swap>& swaps, bool across) {
         for (int64_t l = 0; l < g.n_layers; ++l) {
             const float* u = drive.d.usage.data() + l * g.n_expert;
             const int32_t* r = host_res.data() + l * g.n_expert;
+            const float weight = cost_reference
+                ? aei_rank_costs->multiplier((uint32_t)l, cost_reference) : 1.0f;
+            const bool reuse_enabled = aei_reuse_index != nullptr;
             for (int32_t e = 0; e < (int32_t) g.n_expert; ++e) {
                 const int32_t rk = prof_rank[(size_t) (l * g.n_expert + e)];
-                if (r[e] >= 0) vict.push_back({u[e], rk, (int32_t) l, e});
-                else if (u[e] >= 1.5f && !(remote_opt && remote_opt->owns(l, e)))
-                    cand.push_back({peer.valid() && peer.has(l, e) ? u[e] - promote_margin : u[e], rk, (int32_t) l, e});
+                const float reuse_weight = reuse_enabled
+                    ? aei_reuse_index->priority_multiplier((size_t)l * (size_t)g.n_expert + (size_t)e)
+                    : 1.0f;
+                const float total_weight = weight * reuse_weight;
+                const float predicted = aei_prefetch
+                    ? aei_prefetch->boost((size_t)l * (size_t)g.n_expert + (size_t)e) : 0.0f;
+                if (r[e] >= 0) vict.push_back({u[e] * total_weight, rk, (int32_t) l, e});
+                else if ((u[e] >= 1.5f || predicted > 0.0f) &&
+                         !(remote_opt && remote_opt->owns(l, e)))
+                    cand.push_back({(peer.valid() && peer.has(l, e) ? u[e] - promote_margin : u[e]) *
+                                   total_weight + predicted, rk, (int32_t) l, e});
             }
         }
         if (cand.empty() || vict.empty()) return;
@@ -195,8 +244,11 @@ void Runtime::rank_swaps(std::vector<Swap>& swaps, bool across) {
         for (int32_t e = 0; e < (int32_t) g.n_expert; ++e) {
             if (r[e] < 0) {
                 const bool on_peer = peer.valid() && peer.has(l, e);
-                if (u[e] >= 2.0f && !(remote_opt && remote_opt->owns(l, e)))
-                    cand.emplace_back(on_peer ? u[e] - margin : u[e], e);
+                const float predicted = aei_prefetch
+                    ? aei_prefetch->boost((size_t)l * (size_t)g.n_expert + (size_t)e) : 0.0f;
+                if ((u[e] >= 2.0f || predicted > 0.0f) &&
+                    !(remote_opt && remote_opt->owns(l, e)))
+                    cand.emplace_back((on_peer ? u[e] - margin : u[e]) + predicted, e);
             }
             else vict.emplace_back(u[e], e);
         }
@@ -254,6 +306,7 @@ bool Runtime::adapt() {
     std::vector<Swap> swaps;
     rank_swaps(swaps, false);
     if ((int) swaps.size() > o.adapt_swaps) swaps.resize((size_t) o.adapt_swaps);
+    aei_prefetch_predicted_sources(swaps);
     std::vector<int> staged_on;   // the devices whose adapt streams hold copies back (-1: CUDA0)
     const auto copy_back = [&](int32_t layer, int32_t slot, uint8_t* dst) -> bool {
         const int stn = multi_gpu ? stage_of(layer) : 0;
@@ -346,6 +399,7 @@ bool Runtime::xq_round(std::vector<Swap>* ranked) {
     if (swaps.size() > cap) swaps.resize(cap);
     // a round with base share to spare spends it on experts routed about once lately
     if (xq_across && swaps.size() < base) rank_once(swaps, std::min(base - swaps.size(), kOnceSwaps));
+    aei_prefetch_predicted_sources(swaps);
     xq.clear();
     size_t n_noplace = 0;
     const auto& lay = basalt::kernels::cpu::expert_layout();

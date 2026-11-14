@@ -7,6 +7,7 @@
 #include "basalt/core/peer_experts.hpp"
 #include "basalt/kernels/iq_kernels.hpp"
 #include "basalt/kernels/dec_moe.hpp"
+#include <array>
 #include <vector>
 
 namespace basalt::core {
@@ -92,6 +93,14 @@ struct DecMoe {
     cudaEvent_t st_fork = nullptr, st_join = nullptr;
     int64_t stage_stride = 0;
     int stage_blocks = 0;
+    std::array<int32_t, basalt::kernels::kDmCap + 1> stage_baseline{};
+    std::array<int32_t, basalt::kernels::kDmCap + 1> stage_active{};
+    uint64_t gpu_stage_ns_per_expert = 0;
+    uint32_t gpu_stage_observations = 0;
+    int stage_slots = 0;
+    uint64_t stage_blob_bytes = 0;
+    uint64_t stage_dma_ns = 0;
+    bool stage_cost_override = false;
     int stage_min = 0;   // the fewest distinct CPU misses a layer stages a share of
     // pinned staging of the residency uploads: the copies take their source from here, so the call does
     // not wait for the stream; a ring of slots, each reused only after the window's stream sync
