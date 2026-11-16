@@ -139,6 +139,11 @@ struct CommonOptions {
     /// --serve: a prompt read from token 0 is also checkpointed at its first turn boundary - the end of the system
     /// prompt, which every chat of the same client shares - when that is at least N tokens (0 = never)
     int64_t prompt_cache_root = 2048;
+    /// --serve (opt-in): also checkpoint where the last user turn starts - the end of the shared history - when that
+    /// history is at least N tokens past the previous checkpoint (0 = never).  A request that branches off the same
+    /// history with a different last message (a sibling or sub-agent) then reuses the whole history instead of
+    /// reading it again from the system prompt's end.  Needs --prompt-cache of 3 or more.
+    int64_t prompt_cache_fork = 0;
     /// --serve: the token that opens a chat turn (the pack's own, or --turn-token).  The last one in a prompt is where the chat's
     /// history ends and the new assistant turn begins, which is the checkpoint the next request can reuse.
     int64_t turn_token = -1;

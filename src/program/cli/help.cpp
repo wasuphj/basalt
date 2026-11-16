@@ -53,6 +53,8 @@ void usage() {
                  "  --eos-ids LIST       the end-of-turn token ids for --stop-eos (default the pack's); implies it\n"
                  "  --prompt-cache-root N  --serve: checkpoint a prompt's first turn boundary when it is at least N tokens\n"
                  "                       long (default 2048, 0 = never)\n"
+                 "  --prompt-cache-fork N  --serve: also checkpoint where the last user turn starts, when that history is at\n"
+                 "                       least N tokens past the previous checkpoint (default 0 = never; needs --prompt-cache 3+)\n"
                  "  --max-new N          tokens to generate (default 16)\n"
                  "  --max-context N      KV/state capacity (default %lld)\n"
                  "  --rope-scaling T     extend the context past the trained one: none, linear\n"
