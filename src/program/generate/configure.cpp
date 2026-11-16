@@ -43,7 +43,7 @@ int run(int argc, char** argv) {
             basalt::log::error("basalt", "host pool cannot read RAM/cgroup availability");
             return 1;
         }
-        const uint64_t permitted = std::min(memory.cgroup_available, basalt::platform::total_physical_memory());
+        const uint64_t permitted = std::min(memory.available, basalt::platform::total_physical_memory());
         std::string error;
         if (!basalt::core::open_host_pool(common.host_pool_bytes, permitted, error)) {
             basalt::log::error("basalt", "%s", error.c_str());
