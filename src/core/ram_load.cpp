@@ -1,4 +1,5 @@
 // src/core/ram_load.cpp - the shared RAM expert loader: unbuffered reads on a thread pool, then the pin.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/ram_load.hpp"
 #include "basalt/core/vmm.hpp"
 #include "basalt/platform/file.hpp"
@@ -286,13 +287,13 @@ RamPin pin_ram_bounded(void* base, uint64_t bytes, uint64_t lock_bytes, const st
     const unsigned flags = cudaHostRegisterPortable | (mapped ? cudaHostRegisterMapped : 0u);
     const auto register_range = [&](uint64_t off, uint64_t n, const uint8_t*& alias) {
         void* at = (uint8_t*) base + off;
-        cudaError_t e = cudaHostRegister(at, (size_t) n, flags);
+        cudaError_t e = basalt::core::register_host_memory(at, (size_t) n, flags);
         if (e == cudaSuccess && device) {
             void* d = nullptr;
             e = cudaHostGetDevicePointer(&d, at, 0);
             if (e == cudaSuccess && d == nullptr) e = cudaErrorInvalidValue;
             if (e == cudaSuccess) alias = (const uint8_t*) d;
-            else (void) cudaHostUnregister(at);
+            else (void) basalt::core::unregister_host_memory(at);
         }
         if (e == cudaSuccess) return true;
         p.refused = cudaGetErrorString(e);
@@ -347,7 +348,7 @@ RamPin pin_ram(void* base, uint64_t register_bytes, uint64_t lock_bytes, const s
         lock_rest(0);
         return p;
     }
-    const cudaError_t e = cudaHostRegister(base, (size_t) register_bytes, flags);
+    const cudaError_t e = basalt::core::register_host_memory(base, (size_t) register_bytes, flags);
     if (e == cudaSuccess) {
         if (device == nullptr) {
             p.registered_bytes = register_bytes;
@@ -359,7 +360,7 @@ RamPin pin_ram(void* base, uint64_t register_bytes, uint64_t lock_bytes, const s
             p.registered_bytes = register_bytes;
             return p;
         }
-        (void) cudaHostUnregister(base);
+        (void) basalt::core::unregister_host_memory(base);
     }
     p.refused = cudaGetErrorString(e);
     // read here: an error left set would be reported by the next unrelated call that checks
@@ -380,7 +381,7 @@ RamPin pin_ram(void* base, uint64_t register_bytes, uint64_t lock_bytes, const s
     for (size_t i = 0; i + 1 < bounds.size(); ++i) {
         const uint64_t off = bounds[i], n = bounds[i + 1] - bounds[i];
         if (p.capped && (off > p.cap || n > p.cap - off)) break;
-        if (cudaHostRegister((uint8_t*) base + off, (size_t) n, flags) != cudaSuccess) {
+        if (basalt::core::register_host_memory((uint8_t*) base + off, (size_t) n, flags) != cudaSuccess) {
             (void) cudaGetLastError();
             break;
         }
@@ -396,9 +397,9 @@ void unpin_ram(void* base, const RamPin& p) {
     if (p.allocation_backed) return;
     if (p.locked_bytes > 0) platform::unlock_resident((uint8_t*) base + p.lock_off, p.locked_bytes);
     if (p.sliced) {
-        for (uint64_t off : p.slice_starts) (void) cudaHostUnregister((uint8_t*) base + off);
+        for (uint64_t off : p.slice_starts) (void) basalt::core::unregister_host_memory((uint8_t*) base + off);
     } else if (p.registered_bytes > 0) {
-        (void) cudaHostUnregister(base);
+        (void) basalt::core::unregister_host_memory(base);
     }
 }
 
@@ -430,7 +431,7 @@ bool RamAllocation::allocate(uint64_t bytes, bool pin) {
     if (!bytes) return true;
     if (bytes > SIZE_MAX - ((2ull << 20) - 1)) return false;
     if constexpr (platform::kPreferHostVmm) {
-        if (pin) data_ = vmm::alloc_host(bytes, capacity_);
+        if (pin && !host_pool_enabled()) data_ = vmm::alloc_host(bytes, capacity_);   // the fixed host pool is the only home when it is open
         allocation_pinned_ = data_ != nullptr;
     }
     if (!data_) {

@@ -824,8 +824,8 @@ bool FileExpertSource::pin_cache_complement(
         else if (pinned_ok) (void) cudaFreeHost(arena);
         else {
             if (partial_pin > 0) {
-                if (slice_at.empty()) (void) cudaHostUnregister(arena);
-                else for (uint64_t off : slice_at) (void) cudaHostUnregister((uint8_t*) arena + off);
+                if (slice_at.empty()) (void) basalt::core::unregister_host_memory(arena);
+                else for (uint64_t off : slice_at) (void) basalt::core::unregister_host_memory((uint8_t*) arena + off);
             }
             if (locked > 0) basalt::platform::unlock_resident((uint8_t*) arena + lock_off, locked);
             if (allocation.data()) allocation.reset();
@@ -1670,9 +1670,9 @@ void FileExpertSource::unregister_complement() {
     if (unpinned_ || complement_arena_ == nullptr) return;
     if (pin_units_.size() >= 2 && pin_state_) {
         for (size_t i = 0; i + 1 < pin_units_.size(); ++i)
-            if (pin_state_[i].load() == 1) (void) cudaHostUnregister((uint8_t*) complement_arena_ + pin_units_[i]);
+            if (pin_state_[i].load() == 1) (void) basalt::core::unregister_host_memory((uint8_t*) complement_arena_ + pin_units_[i]);
     } else if (!complement_slice_at_.empty()) {
-        for (uint64_t off : complement_slice_at_) (void) cudaHostUnregister((uint8_t*) complement_arena_ + off);
+        for (uint64_t off : complement_slice_at_) (void) basalt::core::unregister_host_memory((uint8_t*) complement_arena_ + off);
     } else {
         (void) basalt::core::unregister_host_memory(complement_arena_);
     }
