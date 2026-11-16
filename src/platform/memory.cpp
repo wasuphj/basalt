@@ -296,6 +296,14 @@ bool cgroup_available_bytes(uint64_t limit, const CgroupMemoryStat& stat, uint64
 bool host_available_memory(HostMemory& m, const std::string& meminfo_arg, const std::string& self_cgroup_arg,
                            const std::string& cgroup_root_arg) {
     m = HostMemory{};
+    // An open fixed host pool is the process's whole host RAM: what every plan, guard and admission reads is its free
+    // capacity, not the system RAM the pool already took (the system's own reading stays for explicit paths, tests).
+    if (meminfo_arg.empty() && self_cgroup_arg.empty() && cgroup_root_arg.empty()) {
+        if (const uint64_t reserved = reserved_host_available(); reserved != UINT64_MAX) {
+            m.available = reserved;
+            return true;
+        }
+    }
     const std::string meminfo = meminfo_arg.empty() ? basalt::platform::meminfo_path() : meminfo_arg;
     const std::string self_cgroup = self_cgroup_arg.empty() ? basalt::platform::self_cgroup_path() : self_cgroup_arg;
     const std::string cgroup_root = cgroup_root_arg.empty() ? basalt::platform::cgroup_root() : cgroup_root_arg;
