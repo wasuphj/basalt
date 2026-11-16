@@ -1,3 +1,4 @@
+#include "basalt/core/host_pool.hpp"
 #include "basalt/models/qwen4exp/shared_names.hpp"
 #include "context.hpp"
 
@@ -373,7 +374,7 @@ int prompt_split(Context& context) {
                               err.empty() ? "no memory" : err.c_str());
             err.clear();
             for (auto& x : pstages)
-                if (x->image != nullptr) cudaFreeHost(x->image);
+                if (x->image != nullptr) basalt::core::release_pinned_host(x->image);
             pstages.clear();
             split_stages = 0;
         }

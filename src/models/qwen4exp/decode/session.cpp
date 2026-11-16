@@ -1,4 +1,5 @@
 // src/models/qwen4exp/decode/session.cpp - one token through all 48 layers.  See the header for why the graphs are per-layer.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/models/qwen4exp/decode/session.hpp"
 #include "basalt/models/qwen4exp/kernels/mrope.hpp"
 #include "basalt/core/progress.hpp"
@@ -662,7 +663,7 @@ bool SessionLoopScratch::init(size_t parts_bytes_in, std::string& err) {
     }
     parts_bytes = parts_bytes_in;
     // MAPPED as well as pinned: the token graph's handoff kernel reads it through its device pointer.
-    if (cudaHostAlloc((void**) &y_miss, parts_bytes, cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
+    if (basalt::core::allocate_pinned_host((void**) &y_miss, parts_bytes, cudaHostAllocMapped | cudaHostAllocPortable) != cudaSuccess) {
         err = "SessionLoopScratch: cudaHostAlloc for the pool's staging failed";
         return false;
     }
@@ -677,7 +678,7 @@ bool SessionLoopScratch::init(size_t parts_bytes_in, std::string& err) {
 
 void SessionLoopScratch::free() {
     if (probe != nullptr) { cudaEventDestroy(probe); probe = nullptr; }
-    if (y_miss != nullptr) { cudaFreeHost(y_miss); y_miss = nullptr; }
+    if (y_miss != nullptr) { basalt::core::release_pinned_host(y_miss); y_miss = nullptr; }
     parts_bytes = 0;
 }
 
@@ -733,7 +734,7 @@ bool session_loop(const ModelGeometry& g, int64_t pos, int32_t pos_base, Session
     // `cudaMemcpyAsync` with a pageable source cannot DMA: the driver first memcpys the bytes into an internal
     // pinned bounce buffer, SYNCHRONOUSLY, on this thread, and only then enqueues the transfer.  So the "async"
     // copy would be a blocking memcpy plus a driver round trip, on the critical path of all 48 layers.  The
-    // doorbell's `h_x_f` is `cudaHostAlloc(Mapped)` for exactly this reason and this buffer is the same kind of
+    // doorbell's `h_x_f` is `basalt::core::allocate_pinned_host(Mapped)` for exactly this reason and this buffer is the same kind of
     // object.
     float* y_miss = scratch->y_miss;
     cudaEvent_t probe = scratch->probe;

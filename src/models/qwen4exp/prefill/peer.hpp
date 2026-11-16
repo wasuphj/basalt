@@ -1,5 +1,6 @@
 #pragma once
 
+#include "basalt/core/host_pool.hpp"
 #include "common.hpp"
 #include "layout.hpp"
 #include "basalt/models/qwen4exp/prefill/prefill.hpp"
@@ -86,7 +87,7 @@ struct PeerStage {
         dev = peer_dev;
         bytes = blob_bytes;
         for (int i = 0; i < kBufs; ++i)
-            if (cudaHostAlloc((void**) &buf[i], bytes, cudaHostAllocDefault) != cudaSuccess) { cudaGetLastError(); release(); return false; }
+            if (basalt::core::allocate_pinned_host((void**) &buf[i], bytes, cudaHostAllocDefault) != cudaSuccess) { cudaGetLastError(); release(); return false; }
         // h2d is recorded on the primary's copy stream, so it belongs to the current (primary) device; the rest to the peer
         for (int i = 0; i < kBufs; ++i)
             if (cudaEventCreateWithFlags(&h2d[i], cudaEventDisableTiming) != cudaSuccess) { release(); return false; }
@@ -113,7 +114,7 @@ struct PeerStage {
     void release() {
         ok = false;
         for (int i = 0; i < kBufs; ++i) {
-            if (buf[i]) cudaFreeHost(buf[i]);
+            if (buf[i]) basalt::core::release_pinned_host(buf[i]);
             buf[i] = nullptr;
             if (d2h[i]) cudaEventDestroy(d2h[i]);
             if (h2d[i]) cudaEventDestroy(h2d[i]);

@@ -1,4 +1,5 @@
 // src/vision/encoder_cuda.cu - see basalt/vision/encoder_cuda.hpp.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/vision/encoder_cuda.hpp"
 
 #include <cublas_v2.h>
@@ -104,7 +105,7 @@ struct CudaEncoder::Impl {
     }
     void release_image() {
         if (!image) return;
-        if (image_pinned) cudaFreeHost(image);
+        if (image_pinned) basalt::core::release_pinned_host(image);
         else std::free(image);
         image = nullptr;
     }
@@ -175,7 +176,7 @@ struct CudaEncoder::Impl {
         wbytes = cur;
         release_image();
         if (pinned) {
-            if (cudaHostAlloc((void**) &image, wbytes, cudaHostAllocDefault) != cudaSuccess) { e = "cannot pin the encoder weights"; return false; }
+            if (basalt::core::allocate_pinned_host((void**) &image, wbytes, cudaHostAllocDefault) != cudaSuccess) { e = "cannot pin the encoder weights"; return false; }
             image_pinned = true;
         } else {
             image = (uint8_t*) std::malloc(wbytes);
