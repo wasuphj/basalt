@@ -1553,11 +1553,10 @@ int64_t FileExpertSource::commit_exchanges() {
 }
 
 void FileExpertSource::trim_file_cache() {
-    if (pool_direct_fd_ < 0 || pool_map_bytes_ == 0) return;
+    if (base_ == nullptr || mapped_bytes_ == 0) return;
     // The mapping stays valid; a retained pointer faults the same bytes back in when used.
     (void) view_.release(0, mapped_bytes_);
     platform::advise_dontneed(fd_, file_off_, mapped_bytes_);
-    pool_map_bytes_ = 0;
     ++pool_map_trims_;
 }
 

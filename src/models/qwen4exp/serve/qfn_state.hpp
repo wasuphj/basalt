@@ -441,6 +441,7 @@ private:
     int init_conversations();
     int init_tiers();
     int init_memory();
+    void relieve_pool(bool startup) override;
     int capture_windows();
     int init_batch();
 };

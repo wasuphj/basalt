@@ -28,6 +28,7 @@ Flow Request::complete() {
         runtime_.live_ok = runtime_.o.prompt_cache > 0;
     }
     runtime_.ckd_finish();
+    runtime_.relieve_pool(false);
     const DoneCounts dc = done_counts();
     // the prompt tokens this request read - all the fresh ones, or as far as the prompt pass got when a cancel
     // stopped it part-way

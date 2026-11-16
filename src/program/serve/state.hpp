@@ -98,6 +98,8 @@ public:
     virtual void after_input_start() {}
     virtual void print_info() = 0;   // the INFO line
     virtual void at_exit() {}
+    /// With a fixed host pool: give back the file pages and the idle pool pages (startup keeps 1 GiB warm, a request's end up to 3.5 GiB).
+    virtual void relieve_pool(bool /*startup*/) {}
     /// The pack's tokenizer rule, set before the input starts.
     basalt::model::ModelAdapter::PreTokenizer pre_{};
     static constexpr int kPenaltyWindowCap = 4096;
