@@ -396,6 +396,9 @@ bool host_available_memory(HostMemory& m, const std::string& meminfo_arg, const 
 }
 
 uint64_t available_memory() {
+    // An open fixed host pool is the process's whole host RAM: its free capacity is what every plan, guard and cache
+    // admission must read, not the system's RAM the pool already took.
+    if (const uint64_t reserved = reserved_host_available(); reserved != UINT64_MAX) return reserved;
     HostMemory m;
     return host_available_memory(m) ? m.available : os_available_memory();
 }
