@@ -18,6 +18,10 @@ std::atomic<bool> enabled{false};
 std::mutex pool_mu;
 uint8_t* pool_base = nullptr;
 std::map<size_t, size_t> discarded_ranges;
+// CUDA registrations inside the pool, start -> bytes.  Only pinned leases and explicit register calls are registered:
+// cudaHostRegister/Unregister synchronize the device, so a plain buffer (alloc_aligned, vectors, checkpoints) taken in
+// a hot path must never pay them.
+std::map<uintptr_t, size_t> registered;
 
 void mark_discarded(size_t s, size_t e) {
     if (s >= e) return;
@@ -62,7 +66,7 @@ bool ensure_committed(size_t s, size_t e) {
     return true;
 }
 
-void* allocate(size_t bytes, size_t alignment) {
+void* allocate_lease(size_t bytes, size_t alignment, bool pin) {
     if (bytes > std::numeric_limits<size_t>::max() - 4095) return nullptr;
     bytes = (bytes + 4095) & ~size_t{4095};
     std::lock_guard<std::mutex> lk(pool_mu);
@@ -73,18 +77,27 @@ void* allocate(size_t bytes, size_t alignment) {
     if (!ensure_committed(off, end)) {
         arena().release(p); return nullptr;
     }
-    if (cudaHostRegister(p, bytes, cudaHostRegisterMapped | cudaHostRegisterPortable) != cudaSuccess) {
-        (void) cudaGetLastError();
-        arena().release(p); return nullptr;
+    if (pin) {
+        if (cudaHostRegister(p, bytes, cudaHostRegisterMapped | cudaHostRegisterPortable) != cudaSuccess) {
+            (void) cudaGetLastError();
+            arena().release(p); return nullptr;
+        }
+        registered[(uintptr_t) p] = bytes;
     }
     return p;
 }
+void* allocate(size_t bytes, size_t alignment) { return allocate_lease(bytes, alignment, false); }
 bool release(void* p) {
     std::lock_guard<std::mutex> lk(pool_mu);
     if (!arena().owns(p)) return false;
     const size_t bytes = arena().allocation_bytes(p);
     if (!bytes) std::abort();
-    if (cudaHostUnregister(p) != cudaSuccess) std::abort();
+    // every registration inside the lease goes with it (a pinned lease, or slices a caller registered)
+    const uintptr_t s = (uintptr_t) p, e = s + bytes;
+    for (auto it = registered.lower_bound(s); it != registered.end() && it->first < e;) {
+        if (cudaHostUnregister((void*) it->first) != cudaSuccess) (void) cudaGetLastError();
+        it = registered.erase(it);
+    }
     if (!arena().release(p)) std::abort();
     return true;
 }
@@ -198,7 +211,7 @@ cudaError_t allocate_pinned_host(void** p, size_t bytes, unsigned int flags) {
     if (!enabled) return cudaHostAlloc(p, bytes, flags);
     if (!p) return cudaErrorInvalidValue;
     if (!bytes) { *p = nullptr; return cudaSuccess; }
-    try { *p = allocate(bytes, 4096); }
+    try { *p = allocate_lease(bytes, 4096, true); }
     catch (const std::bad_alloc&) { *p = nullptr; }
     return *p ? cudaSuccess : cudaErrorMemoryAllocation;
 }
@@ -211,12 +224,30 @@ cudaError_t release_pinned_host(void* p) {
 cudaError_t register_host_memory(void* p, size_t bytes, unsigned int flags) {
     if (enabled && arena().owns(p)) {
         if (!arena().owns_range(p, bytes)) return cudaErrorInvalidValue;
-        return cudaSuccess;
+        std::lock_guard<std::mutex> lk(pool_mu);
+        const uintptr_t s = (uintptr_t) p;
+        // already covered by a pinned lease or an earlier registration that holds the whole range
+        auto it = registered.upper_bound(s);
+        if (it != registered.begin()) {
+            --it;
+            if (it->first <= s && s + bytes <= it->first + it->second) return cudaSuccess;
+        }
+        const cudaError_t e = cudaHostRegister(p, bytes, flags);
+        if (e == cudaSuccess) registered[s] = bytes;
+        return e;
     }
     return cudaHostRegister(p, bytes, flags);
 }
 cudaError_t unregister_host_memory(void* p) {
-    return enabled && arena().owns(p) ? cudaSuccess : cudaHostUnregister(p);
+    if (enabled && arena().owns(p)) {
+        std::lock_guard<std::mutex> lk(pool_mu);
+        const auto it = registered.find((uintptr_t) p);
+        if (it == registered.end()) return cudaSuccess;   // inside a pinned lease: released with it
+        const cudaError_t e = cudaHostUnregister(p);
+        registered.erase(it);
+        return e;
+    }
+    return cudaHostUnregister(p);
 }
 void* allocate_plain_host(size_t bytes) {
     if (!enabled) return std::malloc(bytes);
