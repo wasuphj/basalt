@@ -260,6 +260,9 @@ int QfnRuntime::init_memory() {
 void QfnRuntime::shed_more() {
     if (srcp != &src || !src.complement_ready() || src.homes_bytes() == 0) return;
     if (windows_in_flight()) return;   // a window may be reading a home: only between windows
+    // the homes are the working set's RAM copy (experts the KV took the slots of): giving them back makes every
+    // token read those experts from the file, so only at the critical level, never to make room for a cache
+    if (basalt::platform::ram_guard_level() != basalt::platform::RamLevel::Critical) return;
     const uint64_t held = src.homes_bytes();
     size_t released = 0;
     for (size_t j = 0; j < host_res.size(); ++j)

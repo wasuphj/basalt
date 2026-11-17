@@ -210,8 +210,8 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
 }
 
 // With a fixed host pool, before a conversation is given up for lack of room: the parked conversations go to the disk
-// tier (written before this returns), the checkpoint blocks kept for reuse and the RAM homes go back, then the
-// admission is asked again.  False without a pool, or when that still leaves too little.
+// tier (written before this returns) and the checkpoint blocks kept for reuse go back, then the admission is asked
+// again.  The experts' RAM homes stay: they are the working set, and a conversation is cheaper to read back.  False without a pool, or when that still leaves too little.
 bool QfnRuntime::reclaim_pool_for(size_t need, uint64_t floor) {
     if (!basalt::core::host_pool_enabled()) return false;
     size_t to_disk = 0;
@@ -222,7 +222,6 @@ bool QfnRuntime::reclaim_pool_for(size_t need, uint64_t floor) {
                 ++to_disk;
     }
     const size_t pooled = basalt::core::CheckpointBytes::allocator_type::release_pooled();
-    shed_more();
     const bool ok = capture_admit(need, floor);
     basalt::log::info("basalt serve", "host pool: made room for a %zu MiB conversation (%zu parked to disk, %zu MiB of "
                       "checkpoint blocks freed): %s", need >> 20, to_disk, pooled >> 20, ok ? "fits" : "still short");
