@@ -563,8 +563,10 @@ BelowFloorClock g_below;            // how long the reading has been below the f
 void guard_judge(uint64_t avail) {
     std::lock_guard<std::mutex> judge(g_judge_mu);
     const uint64_t floor = g_guard_floor.load();
-    // the stall reading only matters below the floor
-    const MemoryStalls stalls = ram_below_floor(avail, floor) ? memory_stalls() : MemoryStalls{};
+    // the stall reading only matters below the floor, and not at all with a fixed host pool: the engine's memory is
+    // resident in the pool, so the system's stalls are other programs' and the pool's own floor is what counts
+    const bool pooled = reserved_host_available() != UINT64_MAX;
+    const MemoryStalls stalls = !pooled && ram_below_floor(avail, floor) ? memory_stalls() : MemoryStalls{};
     const uint64_t below_ms = g_below.update(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
         ram_below_floor(avail, floor));
