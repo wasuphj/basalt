@@ -160,7 +160,7 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
                                                   disk.enabled() ? disk_floor : 0);
         const size_t retained = reuse.bytes() + stage_retained;
         const size_t additional = estimate > retained ? estimate - retained : 0;
-        if (!capture_admit(additional, floor)) {
+        if (!capture_admit(additional, floor) && !reclaim_pool_for(additional, floor)) {
             basalt::log::info("basalt serve", "conversation cache: skip parking (physical RAM admission; need %zu MiB plus %lld MiB floor, or telemetry unavailable, or RAM below the guard)",
                          additional >> 20, (long long) o.conversation_cache_min_free_mib);
             return true;
@@ -182,8 +182,12 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
             image.stage_images.push_back(std::move(part));
         }
         if (!basalt::core::conversation_memory_admit(basalt::core::conversation_available_memory(), 0, floor)) {
-            basalt::log::info("basalt serve", "conversation cache: skip parking (physical RAM floor after capture, or telemetry unavailable)");
-            return true;
+            // with a fixed host pool the captured image goes to the disk tier (written now, its RAM then reused)
+            if (!(basalt::core::host_pool_enabled() && disk_wants)) {
+                basalt::log::info("basalt serve", "conversation cache: skip parking (physical RAM floor after capture, or telemetry unavailable)");
+                return true;
+            }
+            to_disk = true;
         }
         const size_t snapshot_bytes = image.bytes();
         const bool stored = to_disk ? store_conversation(image)
@@ -203,6 +207,26 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
         basalt::log::warn("basalt serve", "conversation cache: allocation failed; skip parking");
     }
     return true;
+}
+
+// With a fixed host pool, before a conversation is given up for lack of room: the parked conversations go to the disk
+// tier (written before this returns), the checkpoint blocks kept for reuse and the RAM homes go back, then the
+// admission is asked again.  False without a pool, or when that still leaves too little.
+bool QfnRuntime::reclaim_pool_for(size_t need, uint64_t floor) {
+    if (!basalt::core::host_pool_enabled()) return false;
+    size_t to_disk = 0;
+    if (conversations && conversations->size() > 0) {
+        (void) conversations->clear();
+        for (auto& s : conversations->take_spilled())
+            if (disk.enabled() && !disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec) && store_conversation(s))
+                ++to_disk;
+    }
+    const size_t pooled = basalt::core::CheckpointBytes::allocator_type::release_pooled();
+    shed_more();
+    const bool ok = capture_admit(need, floor);
+    basalt::log::info("basalt serve", "host pool: made room for a %zu MiB conversation (%zu parked to disk, %zu MiB of "
+                      "checkpoint blocks freed): %s", need >> 20, to_disk, pooled >> 20, ok ? "fits" : "still short");
+    return ok;
 }
 
 bool QfnRuntime::gpu_sync_ok() {
