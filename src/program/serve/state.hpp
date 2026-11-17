@@ -119,6 +119,8 @@ public:
     virtual void solo_draft_back(bool) {}
     virtual bool capture_admit(uint64_t need, uint64_t floor) = 0;
     virtual bool park_current(size_t held, int64_t kept) = 0;
+    /// With a fixed host pool: moves the parked conversations to the disk tier to fit `need`; false without a pool.
+    virtual bool reclaim_pool_for(size_t, uint64_t) { return false; }
     virtual bool copy_from_slot(int b, const ConvCheckpoint* at, std::string& e) = 0;
     /// Waits for the checkpoint save still on its way to the host, if any; a save that failed drops its checkpoint.  Every
     /// reader of a checkpoint's bytes (a restore, a copy, a park) calls it first.

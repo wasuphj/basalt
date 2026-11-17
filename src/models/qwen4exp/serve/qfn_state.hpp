@@ -443,7 +443,7 @@ private:
     int init_memory();
     void relieve_pool(bool startup) override;
     void shed_more() override;
-    bool reclaim_pool_for(size_t need, uint64_t floor);
+    bool reclaim_pool_for(size_t need, uint64_t floor) override;
     int capture_windows();
     int init_batch();
 };
