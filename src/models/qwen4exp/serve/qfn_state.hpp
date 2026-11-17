@@ -308,6 +308,8 @@ private:
     std::vector<std::pair<int32_t, int32_t>> vram_evicted{};   // (residency index, slot) the shrinks took
     int64_t chunk_full{};
     int64_t kKvGrowCells{};
+    int64_t kv_hold_cells{};                          ///< room a recent long request keeps (QfnRequest::release_room)
+    std::chrono::steady_clock::time_point kv_hold_until{};
     static constexpr int64_t kKvWindowCells = 2* basalt::kernels::kVerifyMaxT + 64;   // a decoding session's next window
     static constexpr int64_t kPeerTakeCells = 32768;   // a fit backing this many new cells hands its experts to the peer
     int64_t kv_moves{};
