@@ -258,6 +258,8 @@ int QfnRuntime::init_memory() {
 
 void QfnRuntime::relieve_pool(bool startup) {
     if (o.host_pool_bytes == 0 || !basalt::core::host_pool_enabled()) return;
+    // BASALT_POOL_RELIEF=0 keeps only the startup relief (a request's end gives nothing back): for A/B measurements
+    if (!startup) { const char* e = std::getenv("BASALT_POOL_RELIEF"); if (e != nullptr && e[0] == '0') return; }
     src.trim_file_cache();
     // under pressure on the system's own RAM (not the pool's) the warm reserve goes too
     basalt::platform::HostMemory sys;
