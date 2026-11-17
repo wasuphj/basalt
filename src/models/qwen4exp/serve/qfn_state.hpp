@@ -442,6 +442,7 @@ private:
     int init_tiers();
     int init_memory();
     void relieve_pool(bool startup) override;
+    void shed_more() override;
     int capture_windows();
     int init_batch();
 };

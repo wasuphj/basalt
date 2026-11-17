@@ -256,6 +256,20 @@ int QfnRuntime::init_memory() {
     return 0;
 }
 
+// the RAM guard: the RAM homes of experts no slot holds go back (they are read from the file until a slot takes them)
+void QfnRuntime::shed_more() {
+    if (srcp != &src || !src.complement_ready() || src.homes_bytes() == 0) return;
+    if (windows_in_flight()) return;   // a window may be reading a home: only between windows
+    const uint64_t held = src.homes_bytes();
+    size_t released = 0;
+    for (size_t j = 0; j < host_res.size(); ++j)
+        if (host_res[j] < 0 && src.home_release((int64_t) j / g.n_expert, (int64_t) j % g.n_expert)) ++released;
+    const uint64_t freed = src.homes_reclaim() + src.homes_compact();
+    if (released > 0 || freed > 0)
+        basalt::log::info("basalt serve", "RAM guard: %zu RAM homes released, %.0f MiB freed (%.0f MiB held before)",
+                          released, (double) freed / 1048576.0, (double) held / 1048576.0);
+}
+
 void QfnRuntime::relieve_pool(bool startup) {
     if (o.host_pool_bytes == 0 || !basalt::core::host_pool_enabled()) return;
     // BASALT_POOL_RELIEF=0 keeps only the startup relief (a request's end gives nothing back): for A/B measurements

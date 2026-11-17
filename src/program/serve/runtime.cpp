@@ -36,6 +36,7 @@ void Runtime::shed_if_low() {
     if (const size_t pooled = basalt::core::CheckpointBytes::allocator_type::release_pooled(); pooled > 0)
         basalt::log::info("basalt serve", "RAM guard: freed %zu MiB of checkpoint blocks kept for reuse",
                           pooled >> 20);
+    shed_more();
     const uint64_t before = basalt::platform::available_memory();
     basalt::platform::release_free_heap();
     const uint64_t after = basalt::platform::available_memory();

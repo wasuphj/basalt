@@ -570,7 +570,9 @@ void guard_judge(uint64_t avail) {
     const uint64_t below_ms = g_below.update(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
         ram_below_floor(avail, floor));
-    const RamLevel level = ram_level(avail, floor, kRamHardFloor, stalls, below_ms);
+    // the pool is resident and fixed: running low in it never takes RAM from the system, so its hard floor is a quarter GiB
+    const uint64_t hard = pooled ? (256ull << 20) : kRamHardFloor;
+    const RamLevel level = ram_level(avail, floor, hard, stalls, below_ms);
     const RamLevel was = g_judged;
     {
         std::lock_guard<std::mutex> lock(g_guard_mu);

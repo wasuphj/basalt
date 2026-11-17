@@ -100,6 +100,8 @@ public:
     virtual void at_exit() {}
     /// With a fixed host pool: give back the file pages and the idle pool pages (startup keeps 1 GiB warm, a request's end up to 3.5 GiB).
     virtual void relieve_pool(bool /*startup*/) {}
+    /// The RAM guard's last step: what else the model can give back (the experts' RAM homes).
+    virtual void shed_more() {}
     /// The pack's tokenizer rule, set before the input starts.
     basalt::model::ModelAdapter::PreTokenizer pre_{};
     static constexpr int kPenaltyWindowCap = 4096;
