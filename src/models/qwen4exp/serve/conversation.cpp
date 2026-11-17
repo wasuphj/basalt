@@ -186,7 +186,7 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
             return true;
         }
         const size_t snapshot_bytes = image.bytes();
-        const bool stored = to_disk ? disk.put(std::move(image), kDiskQueueCap)
+        const bool stored = to_disk ? store_conversation(image)
                                     : conversations->put(std::move(image), held);
         basalt::log::info("basalt serve", "conversation cache: %s %zu tokens in %.1f ms; parked=%zu bytes=%zu evictions=%zu snapshot_bytes=%zu reused_kv_bytes=%zu%s",
                      stored ? "parked" : "skipped", live.size(),
@@ -196,7 +196,7 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
         report_conversations();
         // what the RAM tier evicted to make room goes to the disk tier
         for (auto& s : conversations->take_spilled())
-            if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec)) disk.put(std::move(s), kDiskQueueCap);
+            if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec)) store_conversation(s);
     } catch (const std::bad_alloc&) {
         // The active state has not been touched. Continue with normal
         // prompt processing rather than killing a serving process.
@@ -265,7 +265,7 @@ size_t QfnRuntime::spill_to_disk(bool at_exit, size_t limit) {
     if (at_exit)
         while (conversations->size() > 0) {
             basalt::core::SavedConversation s = conversations->take(conversations->size() - 1);
-            if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec) && disk.put(std::move(s), kDiskQueueCap))
+            if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec) && store_conversation(s))
                 ++written;
         }
     auto spill = [&](const basalt::core::SessionState& s, const std::vector<int32_t>& ids,
@@ -291,7 +291,7 @@ size_t QfnRuntime::spill_to_disk(bool at_exit, size_t limit) {
                 basalt::log::warn("basalt serve", "conversation cache: not written to disk (%s)", se.c_str());
                 return;
             }
-            if (disk.put(std::move(image), kDiskQueueCap)) {
+            if (store_conversation(image)) {
                 ++written;
                 if (!at_exit)
                     basalt::log::info("basalt serve", "conversation cache: %zu tokens to disk between requests "
@@ -455,7 +455,7 @@ bool QfnRuntime::park_one(int b, std::string& e) {
             bytes = image.bytes();
             conversations->put_slot(std::move(image), bs.size());
             for (auto& sc : conversations->take_spilled())
-                if (!disk_has(sc.live.ids, sc.live.imgs, sc.checkpoints, sc.cvec)) disk.put(std::move(sc), kDiskQueueCap);
+                if (!disk_has(sc.live.ids, sc.live.imgs, sc.checkpoints, sc.cvec)) store_conversation(sc);
         } catch (const std::bad_alloc&) {
             basalt::log::warn("basalt serve", "%s's idle conversation stays in VRAM: allocation failed", who.c_str());
             return false;

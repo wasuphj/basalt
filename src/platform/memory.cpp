@@ -572,7 +572,7 @@ void guard_judge(uint64_t avail) {
         ram_below_floor(avail, floor));
     // the pool is resident and fixed: running low in it never takes RAM from the system, so its hard floor is a quarter GiB
     const uint64_t hard = pooled ? (256ull << 20) : kRamHardFloor;
-    const RamLevel level = ram_level(avail, floor, hard, stalls, below_ms);
+    const RamLevel level = ram_level(avail, floor, hard, stalls, pooled ? 0 : below_ms);
     const RamLevel was = g_judged;
     {
         std::lock_guard<std::mutex> lock(g_guard_mu);

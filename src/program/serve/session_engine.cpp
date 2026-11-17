@@ -193,7 +193,7 @@ public:
         if (at_exit)
             while (conversations->size() > 0) {
                 basalt::core::SavedConversation s = conversations->take(conversations->size() - 1);
-                if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec) && disk.put(std::move(s), kDiskQueueCap)) ++written;
+                if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec) && store_conversation(s)) ++written;
             }
         const uint64_t floor = std::max<uint64_t>((uint64_t) o.conversation_cache_min_free_mib << 20, disk_floor);
         const auto spill = [&](const std::vector<int32_t>& ids, const std::vector<ImgKey>& imgs, const std::vector<ConvCheckpoint>& cks, bool cvec) {
@@ -209,7 +209,7 @@ public:
                 basalt::log::warn("basalt serve", "conversation cache: not written to disk (%s)", se.c_str());
                 return;
             }
-            if (disk.put(std::move(image), kDiskQueueCap)) ++written;
+            if (store_conversation(image)) ++written;
         };
         const int active = active_;
         const bool slot0_cached = o.batch > 0 && !bs.empty() && bs[0].cached;
@@ -268,10 +268,10 @@ public:
         }
         basalt::core::SavedConversation image;
         if (!capture(image, live, live_imgs, checks, cvec_cached, err)) return false;
-        (void) (to_disk ? disk.put(std::move(image), kDiskQueueCap) : conversations->put(std::move(image), held));
+        (void) (to_disk ? store_conversation(image) : conversations->put(std::move(image), held));
         report_conversations();
         for (auto& s : conversations->take_spilled())
-            if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec)) disk.put(std::move(s), kDiskQueueCap);
+            if (!disk_has(s.live.ids, s.live.imgs, s.checkpoints, s.cvec)) store_conversation(s);
         return true;
     }
     bool copy_from_slot(int, const ConvCheckpoint*, std::string& e) override { e = "this model's slots copy no cells"; return false; }

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../cli/tokens.hpp"
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/checkpoint_transfer.hpp"
 #include "basalt/core/conversation_cache.hpp"
 #include "basalt/core/conversation_memory.hpp"
@@ -173,6 +174,12 @@ public:
     // the disk tier under it (--conversation-cache-dir): what leaves the session or the RAM cache is written there,
     // and a prompt that starts with a stored conversation reads it back, after a restart too
     basalt::core::ConversationStore disk{};
+    /// A conversation to the disk tier: written before this returns with a fixed host pool (its RAM is then free to
+    /// reuse, and a request right after finds it), queued otherwise.
+    bool store_conversation(basalt::core::SavedConversation& s) {
+        if (basalt::core::host_pool_enabled()) return disk.put_sync(s);
+        return disk.put(std::move(s), kDiskQueueCap);
+    }
     virtual int64_t disk_min_tokens() const = 0;
     static constexpr int64_t kDiskStaleTokens = 4096;   // a stored copy this close to the chain's end is kept
     static constexpr uint64_t kDiskQueueCap = 4ull << 30;   // images waiting for the writer, in RAM
