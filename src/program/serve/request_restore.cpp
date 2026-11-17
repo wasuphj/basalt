@@ -223,6 +223,7 @@ Flow Request::restore() {
             basalt::core::progress_at("request");
         }
     }
+    const auto match_t1 = Clock::now();
     bool parked_early = false;
     if (from_disk) {
         const uint64_t need = runtime_.disk.load_bytes(on_disk);
@@ -379,6 +380,15 @@ Flow Request::restore() {
     if (!release_room()) {
         std::printf("ERR %s\n", runtime_.err.c_str());
         return Flow::error;
+    }
+    {
+        using Ms = std::chrono::duration<double, std::milli>;
+        const auto now = Clock::now();
+        if (Ms(now - r0).count() >= 500)
+            basalt::log::info("basalt serve", "request setup %.0f ms before the prompt read (match and RAM wait "
+                              "%.0f ms, park and disk read %.0f ms, restore and room %.0f ms)", Ms(now - r0).count(),
+                              Ms(match_t1 - r0).count(), Ms(restore_t0 - match_t1).count(),
+                              Ms(now - restore_t0).count());
     }
     std::printf("RESUME %lld\n", (long long) resume);   // before reading: this many prompt tokens are reused
     basalt::core::progress_at("reading the prompt, from token", read_from);
