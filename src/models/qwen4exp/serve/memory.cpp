@@ -263,18 +263,65 @@ void QfnRuntime::shed_more() {
     // the homes are the working set's RAM copy (experts the KV took the slots of): giving them back makes every
     // token read those experts from the file, so only at the critical level, never to make room for a cache
     if (basalt::platform::ram_guard_level() != basalt::platform::RamLevel::Critical) return;
+    // with a fixed host pool the level was judged before the conversations and checkpoint blocks just went: a pool
+    // with room again keeps the homes (each one given back is read from the file on every use until it returns)
+    constexpr uint64_t kKeepHomesAbove = (256ull + 512ull) << 20;
+    if (basalt::core::host_pool_enabled() && basalt::core::host_pool_available() >= kKeepHomesAbove) {
+        basalt::log::info("basalt serve", "RAM guard: %.0f MiB of the pool free after the shed: the RAM homes stay",
+                          (double) basalt::core::host_pool_available() / 1048576.0);
+        return;
+    }
     const uint64_t held = src.homes_bytes();
     size_t released = 0;
     for (size_t j = 0; j < host_res.size(); ++j)
-        if (host_res[j] < 0 && src.home_release((int64_t) j / g.n_expert, (int64_t) j % g.n_expert)) ++released;
+        if (host_res[j] < 0 && src.home_release((int64_t) j / g.n_expert, (int64_t) j % g.n_expert)) {
+            ++released;
+            homes_released.emplace_back((int32_t) (j / g.n_expert), (int32_t) (j % g.n_expert));
+        }
     const uint64_t freed = src.homes_reclaim() + src.homes_compact();
     if (released > 0 || freed > 0)
         basalt::log::info("basalt serve", "RAM guard: %zu RAM homes released, %.0f MiB freed (%.0f MiB held before)",
                           released, (double) freed / 1048576.0, (double) held / 1048576.0);
 }
 
+// Experts whose RAM home the critical guard gave back are read from the file on every use.  Between requests, once
+// the pool has room above a margin again, up to a batch of them get a home back, read from the file once.
+void QfnRuntime::rehome_released() {
+    if (homes_released.empty() || srcp != &src || !src.complement_ready()) return;
+    if (basalt::platform::ram_guard_level() != basalt::platform::RamLevel::Ok) return;
+    constexpr size_t kBatch = 256;                    // about 0.7 GB read per request end
+    constexpr uint64_t kMargin = 2560ull << 20;       // room left for a conversation and the next request
+    std::vector<std::pair<int32_t, int32_t>> want;
+    uint64_t bytes = 0;
+    const auto& lay = basalt::kernels::cpu::expert_layout();
+    size_t k = 0;
+    for (; k < homes_released.size() && want.size() < kBatch; ++k) {
+        const auto [l, e] = homes_released[k];
+        const size_t j = (size_t) l * (size_t) g.n_expert + (size_t) e;
+        if (host_res[j] >= 0 || src.has_resident(l, e)) continue;   // back in a slot, or homed since
+        want.push_back(homes_released[k]);
+        bytes += lay.blob_bytes(l);
+    }
+    if (want.empty()) { homes_released.erase(homes_released.begin(), homes_released.begin() + (std::ptrdiff_t) k); return; }
+    if (basalt::core::host_pool_available() < bytes + kMargin) return;
+    std::string e;
+    std::vector<uint8_t*> dst;
+    if (!src.homes_take(want, e, dst)) return;
+    for (size_t i = 0; i < want.size(); ++i)
+        if (!src.read_from_file(want[i].first, want[i].second, dst[i])) {
+            src.homes_abort();
+            basalt::log::warn("basalt serve", "RAM homes: reading an expert back from the file failed; they stay on the file");
+            return;
+        }
+    src.homes_commit();
+    homes_released.erase(homes_released.begin(), homes_released.begin() + (std::ptrdiff_t) k);
+    basalt::log::info("basalt serve", "RAM homes: %zu experts back in RAM from the file (%.0f MiB), %zu still on the file",
+                      want.size(), (double) bytes / 1048576.0, homes_released.size());
+}
+
 void QfnRuntime::relieve_pool(bool startup) {
     if (o.host_pool_bytes == 0 || !basalt::core::host_pool_enabled()) return;
+    if (!startup) rehome_released();
     // BASALT_POOL_RELIEF=0 keeps only the startup relief (a request's end gives nothing back): for A/B measurements
     if (!startup) { const char* e = std::getenv("BASALT_POOL_RELIEF"); if (e != nullptr && e[0] == '0') return; }
     src.trim_file_cache();

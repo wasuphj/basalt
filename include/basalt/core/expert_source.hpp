@@ -391,6 +391,8 @@ public:
     /// Drop file pages without invalidating their virtual addresses or resident RAM copies.
     void trim_file_cache();
     uint64_t file_cache_trims() const { return pool_map_trims_; }
+    /// One expert's bytes read from the pack (unbuffered with a host pool), for a RAM home made from the file.
+    bool read_from_file(int64_t layer, int64_t expert, uint8_t* dst) const { return copy_from_files(layer, expert, dst); }
 
     /// Blobs touched, for the driver to report.  With `h = 0` this is `48 * k` per token and the number is only
     /// interesting once Phase 3 makes it not so.

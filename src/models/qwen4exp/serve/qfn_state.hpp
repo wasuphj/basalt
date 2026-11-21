@@ -404,6 +404,8 @@ private:
     int32_t loan_plan(int64_t live, int64_t& chunk);
     void relend();
     bool home_given_up(int64_t live, std::string& e);
+    void rehome_released();   ///< the critical guard's released homes come back from the file once the pool has room
+    std::vector<std::pair<int32_t, int32_t>> homes_released;   ///< experts whose home the critical guard gave back
     bool vram_command(const std::string& cmd, std::string& e, bool for_sleep, std::string* reply = nullptr) override;
     int64_t cache_floor_slots();
     int64_t kv_ceiling();
