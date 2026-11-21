@@ -347,6 +347,7 @@ struct ConversationStore::Entry {
     std::vector<Section> table;               ///< the file's sections (empty while queued)
     Header head{};
     std::shared_ptr<Job> job;                 ///< queued, not yet written
+    uint64_t serial = 0;                      ///< this store's name for it (Match::serial)
 };
 
 // ------------------------------------------------------------------------------------------------ file reading
@@ -607,6 +608,7 @@ bool ConversationStore::open(const std::string& dir, uint64_t identity, uint64_t
             for (uint64_t k : e->blocks) e->refs.push_back(part_name(identity_, 'b', k));
             for (uint64_t k : e->check_keys) e->refs.push_back(part_name(identity_, 's', k));
         }
+        e->serial = ++serial_;
         entries_.push_back(std::move(e));
     }
     // a conversation whose block or state files are gone is gone too; the rest count their parts
@@ -664,7 +666,7 @@ ConversationStore::Match ConversationStore::best(const int32_t* prompt, size_t n
         };
         auto consider = [&](int64_t len) {
             if (usable(len) && (len > best.tokens || (len == best.tokens && e.used > best_used))) {
-                best = {i, len};
+                best = {i, len, e.serial};
                 best_used = e.used;
             }
         };
@@ -718,8 +720,9 @@ uint64_t kv_part_bytes(uint32_t kind, uint64_t stored, int64_t stored_cells, int
 
 uint64_t ConversationStore::load_bytes(const Match& m) const {
     std::lock_guard<std::mutex> lk(mu_);
-    if (m.index >= entries_.size()) return 0;
-    const Entry& e = *entries_[m.index];
+    const size_t at = locate_locked(m);
+    if (at == SIZE_MAX) return 0;
+    const Entry& e = *entries_[at];
     if (e.job) return e.job->image.bytes();   // an upper bound for a copy out of the queue
     uint64_t n = (uint64_t) m.tokens * 4 * 3, state = 0;
     for (const Section& s : e.table) {
@@ -750,8 +753,9 @@ bool ConversationStore::load(const Match& m, SavedConversation& out, std::string
     std::vector<uint8_t> kinds;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        if (m.index >= entries_.size() || m.tokens <= 0) { error = "conversation store: no such entry"; return false; }
-        Entry& e = *entries_[m.index];
+        const size_t at = m.tokens > 0 ? locate_locked(m) : SIZE_MAX;
+        if (at == SIZE_MAX) { error = "conversation store: no such entry"; return false; }
+        Entry& e = *entries_[at];
         e.used = ++clock_;
         job = e.job;
         name = e.name;
@@ -1151,6 +1155,7 @@ std::shared_ptr<ConversationStore::Job> ConversationStore::enqueue(SavedConversa
         e->sources.push_back((uint8_t) c.source);
     }
     e->job = job;
+    e->serial = ++serial_;
     entries_.push_back(std::move(e));
     queue_.push_back(job);
     queue_bytes_ += bytes;
@@ -1163,6 +1168,13 @@ void ConversationStore::release_locked(const std::vector<std::string>& refs) {
         auto it = parts_.find(r);
         if (it != parts_.end() && it->second.refs > 0) --it->second.refs;
     }
+}
+
+size_t ConversationStore::locate_locked(const Match& m) const {
+    if (m.index < entries_.size() && entries_[m.index]->serial == m.serial) return m.index;
+    for (size_t i = 0; i < entries_.size(); ++i)
+        if (entries_[i]->serial == m.serial) return i;
+    return SIZE_MAX;
 }
 
 void ConversationStore::drop_locked(size_t index) {

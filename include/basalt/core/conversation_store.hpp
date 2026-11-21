@@ -40,9 +40,12 @@ class ConversationStore {
 public:
     /// Cells behind one pooled row of a K/V layer's index (before open).
     void set_row_cells(int64_t cells) { row_cells_ = cells; }
+    /// `index` is where the entry was when it matched; `serial` names it, so a store that dropped or added entries
+    /// since (a park between the match and the read) still finds it, or says it is gone.
     struct Match {
         size_t index = 0;
         int64_t tokens = 0;
+        uint64_t serial = 0;
     };
     struct Stats {
         size_t files = 0, written = 0, restored = 0, evicted = 0, dropped = 0;
@@ -100,6 +103,7 @@ private:
     bool write_job(Job& job, uint64_t& wrote, uint64_t& whole, std::string& error);
     void evict_locked();
     void drop_locked(size_t index);
+    size_t locate_locked(const Match& m) const;   ///< the matched entry's index now, or SIZE_MAX once it is gone
     void release_locked(const std::vector<std::string>& refs);
     void gc_locked(int64_t min_age);         ///< removes unused block and state files at least `min_age` s old
 
@@ -111,7 +115,7 @@ private:
     std::vector<std::unique_ptr<Entry>> entries_;
     std::map<std::string, PartFile> parts_;   ///< block and state files of this identity, by name
     std::deque<std::shared_ptr<Job>> queue_;
-    uint64_t queue_bytes_ = 0, clock_ = 0;
+    uint64_t queue_bytes_ = 0, clock_ = 0, serial_ = 0;
     bool stop_ = false, busy_ = false;
     Stats stats_;
     std::vector<std::unique_ptr<ConversationStoreBuffer>> read_bufs_;   ///< the loads' aligned read buffers, kept

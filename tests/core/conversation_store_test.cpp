@@ -522,6 +522,30 @@ int main() {
         CHECK(same_state(got.live, sb.checkpoints[1]) && same_state(got.checkpoints[0], sa.checkpoints[0]));
         remove_dir(d3);
     }
+    {   // a match outlives a put that drops an earlier entry: the read finds the matched conversation, not its neighbour
+        const std::string d4 = dir + "-shift";
+        std::vector<int32_t> a(6000), b(6000);
+        for (size_t i = 0; i < a.size(); ++i) { a[i] = (int32_t) (i * 5 + 1); b[i] = (int32_t) (i * 11 + 2); }
+        const SavedConversation sa = image(a, {2048, 4096}), sb = image(b, {2048, 4096});
+        ConversationStore st;
+        st.set_row_cells(4);
+        std::string err;
+        CHECK(st.open(d4, id, 1ull << 30, err));
+        CHECK(st.put(SavedConversation(sa), 1ull << 30));
+        CHECK(st.put(SavedConversation(sb), 1ull << 30));
+        st.flush();
+        std::vector<int32_t> p(b.begin(), b.begin() + 4500);
+        p.push_back(-5);
+        const auto m = st.best(p.data(), p.size(), {}, true);
+        CHECK(m.tokens == 4096 && m.index == 1);
+        CHECK(st.put(SavedConversation(sa), 1ull << 30));   // the same chat again: the first entry goes, the second moves
+        st.flush();
+        SavedConversation got;
+        CHECK(st.load(m, got, err));
+        CHECK((int64_t) got.live.ids.size() == 4096 && std::equal(got.live.ids.begin(), got.live.ids.end(), b.begin()));
+        CHECK(same_state(got.live, sb.checkpoints[1]));
+        remove_dir(d4);
+    }
     {
         const std::string dir2 = dir + "-rows";
         compressed_rows(dir2);
