@@ -155,12 +155,17 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
         return true;
     }
     const auto t0 = Clock::now();
+    auto ms_since = [](Clock::time_point a) { return std::chrono::duration<double, std::milli>(Clock::now() - a).count(); };
+    double t_admit = 0, t_sync = 0, t_save = 0, t_put = 0;
     try {
         const uint64_t floor = std::max<uint64_t>((uint64_t) o.conversation_cache_min_free_mib * 1024 * 1024,
                                                   disk.enabled() ? disk_floor : 0);
         const size_t retained = reuse.bytes() + stage_retained;
         const size_t additional = estimate > retained ? estimate - retained : 0;
-        if (!capture_admit(additional, floor) && !reclaim_pool_for(additional, floor)) {
+        const auto ta = Clock::now();
+        const bool admitted = capture_admit(additional, floor) || reclaim_pool_for(additional, floor);
+        t_admit = ms_since(ta);
+        if (!admitted) {
             basalt::log::info("basalt serve", "conversation cache: skip parking (physical RAM admission; need %zu MiB plus %lld MiB floor, or telemetry unavailable, or RAM below the guard)",
                          additional >> 20, (long long) o.conversation_cache_min_free_mib);
             return true;
@@ -168,8 +173,15 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
         basalt::core::SavedConversation image;
         size_t reused_bytes = 0;
         if (draft0 != nullptr && !mtp.snapshot_main(err)) return false;   // a streamed draft ring's own window
+        {
+            const auto tsync = Clock::now();
+            (void) cudaDeviceSynchronize();   // timed apart: the work still queued, not the copy
+            t_sync = ms_since(tsync);
+        }
+        const auto tsave = Clock::now();
         if (!basalt::core::conversation_snapshot_save(image, view, *rsp, g, draft0, err,
                 std::move(reuse), &reused_bytes)) return false;
+        t_save = ms_since(tsave);
         for (size_t k = 0; k < n_st; ++k) {   // the later stages
             auto& st = stages[k];
             const basalt::core::OnDevice on(st->dev);
@@ -193,8 +205,12 @@ bool QfnRuntime::park_current(size_t held, int64_t kept) {
             to_disk = true;
         }
         const size_t snapshot_bytes = image.bytes();
+        const auto tput = Clock::now();
         const bool stored = to_disk ? store_conversation(image)
                                     : conversations->put(std::move(image), held);
+        t_put = ms_since(tput);
+        basalt::log::info("basalt serve", "conversation park phases: admit %.1f ms, queued GPU work %.1f ms, copy %.1f ms, store %.1f ms",
+                          t_admit, t_sync, t_save, t_put);
         basalt::log::info("basalt serve", "conversation cache: %s %zu tokens in %.1f ms; parked=%zu bytes=%zu evictions=%zu snapshot_bytes=%zu reused_kv_bytes=%zu%s",
                      stored ? "parked" : "skipped", live.size(),
                      std::chrono::duration<double, std::milli>(Clock::now() - t0).count(),
