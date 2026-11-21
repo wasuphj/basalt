@@ -1,4 +1,5 @@
 // src/core/weights.cpp - the dense-weight loader.  See the header for the engine-vs-pack distinction.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/weights.hpp"
 #include "basalt/core/loader.hpp"
 #include "basalt/core/load_progress.hpp"

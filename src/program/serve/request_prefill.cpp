@@ -67,13 +67,23 @@ Flow Request::read_prompt() {
         // at a picture's edge
         if (end > std::max(resume, root_at) && end < last) media_at = end;
     }
+    // (opt-in) The last user turn's start is where a sibling that branches off the same history diverges from this
+    // prompt; a checkpoint there lets it reuse the whole history.  The turn end above sits after the last user
+    // message, so it only serves a request that continues this very conversation.
+    fork_at = -1;
+    if (runtime_.o.prompt_cache_fork > 0 && turn_at > 0)
+        for (int64_t i = turn_at - 1; i > resume; --i)
+            if (ids[(size_t) i] == runtime_.o.turn_token) { fork_at = i; break; }
+    if (fork_at > 0 && (fork_at <= root_at ||
+                        fork_at - std::max<int64_t>(read_from, std::max<int64_t>(root_at, 0)) < runtime_.o.prompt_cache_fork))
+        fork_at = -1;
     limit_parts();
     at = read_from;
     // the last window of the last windowed part carries the last prompt token too: the first generated
     // token is sampled from it, and the draft layer takes its rows like any accepted window
     fold_p0 = n - 1;
     prompt_parts_begin();
-    for (const int64_t to : {root_at, media_at, turn_at, n - 1}) {
+    for (const int64_t to : {root_at, media_at, fork_at, turn_at, n - 1}) {
         if (to <= at) continue;
         const Flow flow = read_to(to);
         if (flow == Flow::quit) break;   // stopped while reading: the rest of the request runs, and ends as cancelled

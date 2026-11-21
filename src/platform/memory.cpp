@@ -1,5 +1,7 @@
 // src/platform/memory.cpp - see include/basalt/platform/memory.hpp.
 #include "basalt/platform/memory.hpp"
+#include "basalt/platform/host_allocator.hpp"
+#include "basalt/platform/system.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -30,6 +32,32 @@
 #include "basalt/platform/system.hpp"
 
 namespace basalt::platform {
+
+bool swapping_disabled(const std::string& self_arg, const std::string& root_arg) {
+#if defined(_WIN32)
+    (void) self_arg; (void) root_arg;
+    return false;
+#else
+    const std::filesystem::path root = root_arg.empty() ? cgroup_root() : root_arg;
+    std::ifstream self(self_arg.empty() ? self_cgroup_path() : self_arg);
+    std::string line;
+    while (std::getline(self, line)) {
+        if (line.rfind("0::/", 0) != 0) continue;
+        auto path = (root / line.substr(4)).lexically_normal();
+        const auto relative = path.lexically_relative(root);
+        if (relative.empty() || *relative.begin() == ".." || !std::filesystem::is_directory(path)) path = root;
+        for (;;) {
+            std::ifstream limit(path / "memory.swap.max");
+            std::string value;
+            if (limit >> value && value == "0") return true;
+            if (path == root) break;
+            path = path.parent_path();
+        }
+        return false;
+    }
+    return false;
+#endif
+}
 
 #if defined(_WIN32)
 namespace {
@@ -268,6 +296,14 @@ bool cgroup_available_bytes(uint64_t limit, const CgroupMemoryStat& stat, uint64
 bool host_available_memory(HostMemory& m, const std::string& meminfo_arg, const std::string& self_cgroup_arg,
                            const std::string& cgroup_root_arg) {
     m = HostMemory{};
+    // An open fixed host pool is the process's whole host RAM: what every plan, guard and admission reads is its free
+    // capacity, not the system RAM the pool already took (the system's own reading stays for explicit paths, tests).
+    if (meminfo_arg.empty() && self_cgroup_arg.empty() && cgroup_root_arg.empty()) {
+        if (const uint64_t reserved = reserved_host_available(); reserved != UINT64_MAX) {
+            m.available = reserved;
+            return true;
+        }
+    }
     const std::string meminfo = meminfo_arg.empty() ? basalt::platform::meminfo_path() : meminfo_arg;
     const std::string self_cgroup = self_cgroup_arg.empty() ? basalt::platform::self_cgroup_path() : self_cgroup_arg;
     const std::string cgroup_root = cgroup_root_arg.empty() ? basalt::platform::cgroup_root() : cgroup_root_arg;
@@ -368,6 +404,9 @@ bool host_available_memory(HostMemory& m, const std::string& meminfo_arg, const 
 }
 
 uint64_t available_memory() {
+    // An open fixed host pool is the process's whole host RAM: its free capacity is what every plan, guard and cache
+    // admission must read, not the system's RAM the pool already took.
+    if (const uint64_t reserved = reserved_host_available(); reserved != UINT64_MAX) return reserved;
     HostMemory m;
     return host_available_memory(m) ? m.available : os_available_memory();
 }
@@ -381,6 +420,10 @@ uint64_t ram_reserve() { return g_ram_reserve.load(); }
 void set_ram_reserve(uint64_t bytes) { g_ram_reserve = bytes; }
 
 uint64_t ram_budget(bool* known) {
+    if (const uint64_t reserved = reserved_host_available(); reserved != UINT64_MAX) {
+        if (known) *known = true;
+        return reserved;
+    }
     const uint64_t avail = available_memory();
     if (known) *known = avail > 0;
     if (avail == 0) return UINT64_MAX;
@@ -520,12 +563,16 @@ BelowFloorClock g_below;            // how long the reading has been below the f
 void guard_judge(uint64_t avail) {
     std::lock_guard<std::mutex> judge(g_judge_mu);
     const uint64_t floor = g_guard_floor.load();
-    // the stall reading only matters below the floor
-    const MemoryStalls stalls = ram_below_floor(avail, floor) ? memory_stalls() : MemoryStalls{};
+    // the stall reading only matters below the floor, and not at all with a fixed host pool: the engine's memory is
+    // resident in the pool, so the system's stalls are other programs' and the pool's own floor is what counts
+    const bool pooled = reserved_host_available() != UINT64_MAX;
+    const MemoryStalls stalls = !pooled && ram_below_floor(avail, floor) ? memory_stalls() : MemoryStalls{};
     const uint64_t below_ms = g_below.update(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
         ram_below_floor(avail, floor));
-    const RamLevel level = ram_level(avail, floor, kRamHardFloor, stalls, below_ms);
+    // the pool is resident and fixed: running low in it never takes RAM from the system, so its hard floor is a quarter GiB
+    const uint64_t hard = pooled ? (256ull << 20) : kRamHardFloor;
+    const RamLevel level = ram_level(avail, floor, hard, stalls, pooled ? 0 : below_ms);
     const RamLevel was = g_judged;
     {
         std::lock_guard<std::mutex> lock(g_guard_mu);
@@ -717,6 +764,10 @@ void advise_willneed(int fd, uint64_t offset, uint64_t bytes) {
 
 void* alloc_aligned(size_t bytes, size_t alignment) {
     if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0) return nullptr;
+    if (const auto* hooks = host_allocator_hooks.load(std::memory_order_acquire)) {
+        try { return hooks->allocate(bytes, alignment); }
+        catch (const std::bad_alloc&) { return nullptr; }
+    }
 #if defined(_WIN32)
     return _aligned_malloc(bytes, alignment);
 #else
@@ -728,6 +779,8 @@ void* alloc_aligned(size_t bytes, size_t alignment) {
 
 void free_aligned(void* p) {
     if (p == nullptr) return;
+    if (const auto* hooks = host_allocator_hooks.load(std::memory_order_acquire))
+        if (hooks->release(p)) return;
 #if defined(_WIN32)
     _aligned_free(p);
 #else
@@ -858,6 +911,8 @@ static void* alloc_region_raw(uint64_t bytes, RegionBacking& got, std::string& n
 
 void free_region(void* p, uint64_t bytes) {
     if (!p) return;
+    if (const auto* hooks = host_allocator_hooks.load(std::memory_order_acquire))
+        if (hooks->release(p)) return;
     (void) bytes;   // one VirtualAlloc owns the whole region
     VirtualFree(p, 0, MEM_RELEASE);
 }
@@ -1067,6 +1122,8 @@ static void* alloc_region_raw(uint64_t bytes, RegionBacking& got, std::string& n
 
 void free_region(void* p, uint64_t bytes) {
     if (!p) return;
+    if (const auto* hooks = host_allocator_hooks.load(std::memory_order_acquire))
+        if (hooks->release(p)) return;
     munmap(p, bytes);
 }
 
@@ -1075,6 +1132,15 @@ bool pin_budget(uint64_t&, std::string&, const char*, uint32_t, bool) { return f
 
 void* alloc_region(uint64_t bytes, RegionBacking& got, std::string& note, const std::string& shared_file,
                    uint64_t shared_hash, void*& mapping_base, uint64_t& mapping_bytes) {
+    if (const auto* hooks = host_allocator_hooks.load(std::memory_order_acquire)) {
+        got = RegionBacking::NormalPages; mapping_base = nullptr; mapping_bytes = 0;
+        if (!shared_file.empty()) { note = "a shared arena cannot use the private host pool"; return nullptr; }
+        void* p = nullptr;
+        try { p = hooks->allocate(bytes, 4096); } catch (const std::bad_alloc&) {}
+        if (p) { mapping_base = p; mapping_bytes = bytes; note = "reserved host pool"; }
+        else note = "reserved host pool exhausted";
+        return p;
+    }
     void* p = alloc_region_raw(bytes, got, note, shared_file, shared_hash, mapping_base, mapping_bytes);
     if (p != nullptr && mapping_base == nullptr) {   // not a file mapping: the region is what gets released
         mapping_base = p;

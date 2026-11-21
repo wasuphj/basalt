@@ -1,4 +1,5 @@
 // src/core/peer_experts.cpp - see include/basalt/core/peer_experts.hpp.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/load_progress.hpp"
 #include "basalt/core/peer_experts.hpp"
 
@@ -69,10 +70,10 @@ void PeerExperts::close() {
         if (d_meta_) cudaFree(d_meta_);
         if (d_q8_) cudaFree(d_q8_);
         if (d_scratch_) cudaFree(d_scratch_);
-        if (h_x_) cudaFreeHost(h_x_);
-        if (h_out_) cudaFreeHost(h_out_);
-        if (h_meta_) cudaFreeHost(h_meta_);
-        if (go_) cudaFreeHost(go_);
+        if (h_x_) basalt::core::release_pinned_host(h_x_);
+        if (h_out_) basalt::core::release_pinned_host(h_out_);
+        if (h_meta_) basalt::core::release_pinned_host(h_meta_);
+        if (go_) basalt::core::release_pinned_host(go_);
         if (refill_ev_) cudaEventDestroy(refill_ev_);
         if (evict_ev_) cudaEventDestroy(evict_ev_);
         if (stream_) cudaStreamDestroy(stream_);
@@ -81,7 +82,7 @@ void PeerExperts::close() {
         if (fetch_) cudaStreamSynchronize(fetch_);
         if (scratch_base_) cudaFree(scratch_base_);
         if (d_fplan_) cudaFree(d_fplan_);
-        if (h_fplan_) cudaFreeHost(h_fplan_);
+        if (h_fplan_) basalt::core::release_pinned_host(h_fplan_);
         if (fetch_ev_) cudaEventDestroy(fetch_ev_);
         if (fetch_) cudaStreamDestroy(fetch_);
     }
@@ -184,9 +185,9 @@ bool PeerExperts::prepare(int device, ExpertSource& src, int64_t n_layers, int64
         ck(cudaStreamCreateWithFlags(&refill_, cudaStreamNonBlocking), "refill stream", err) &&
         ck(cudaEventCreateWithFlags(&refill_ev_, cudaEventDisableTiming), "event", err) &&
         ck(cudaEventCreateWithFlags(&evict_ev_, cudaEventDisableTiming), "event", err) &&
-        ck(cudaHostAlloc((void**) &h_x_, (size_t) CAP * n_embd * sizeof(float), cudaHostAllocPortable | cudaHostAllocMapped), "input staging", err) &&
-        ck(cudaHostAlloc((void**) &h_out_, (size_t) CAP * n_embd * sizeof(float), cudaHostAllocPortable | cudaHostAllocMapped), "result staging", err) &&
-        ck(cudaHostAlloc(&h_meta_, sizeof(Meta), cudaHostAllocPortable | cudaHostAllocMapped), "plan staging", err) &&
+        ck(basalt::core::allocate_pinned_host((void**) &h_x_, (size_t) CAP * n_embd * sizeof(float), cudaHostAllocPortable | cudaHostAllocMapped), "input staging", err) &&
+        ck(basalt::core::allocate_pinned_host((void**) &h_out_, (size_t) CAP * n_embd * sizeof(float), cudaHostAllocPortable | cudaHostAllocMapped), "result staging", err) &&
+        ck(basalt::core::allocate_pinned_host(&h_meta_, sizeof(Meta), cudaHostAllocPortable | cudaHostAllocMapped), "plan staging", err) &&
         ck(cudaMalloc((void**) &d_x_, (size_t) CAP * n_embd * sizeof(float)), "input", err) &&
         ck(cudaMalloc((void**) &d_out_, (size_t) CAP * n_embd * sizeof(float)), "result", err) &&
         ck(cudaMalloc(&d_meta_, sizeof(Meta)), "plan", err) &&
@@ -216,9 +217,9 @@ bool PeerExperts::open_plain(int device, int64_t n_layers, int64_t n_expert, int
         ck(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking), "stream", err) &&
         ck(cudaStreamCreateWithFlags(&refill_, cudaStreamNonBlocking), "read stream", err) &&
         ck(cudaHostGetDevicePointer((void**) &rows_map_, rows, 0), "mapped rows", err) &&
-        ck(cudaHostAlloc(&h_meta_, sizeof(Meta), cudaHostAllocPortable | cudaHostAllocMapped), "plan staging", err) &&
+        ck(basalt::core::allocate_pinned_host(&h_meta_, sizeof(Meta), cudaHostAllocPortable | cudaHostAllocMapped), "plan staging", err) &&
         ck(cudaHostGetDevicePointer(&meta_map_, h_meta_, 0), "mapped plan", err) &&
-        ck(cudaHostAlloc((void**) &go_, 64, cudaHostAllocPortable | cudaHostAllocMapped), "plan word", err) &&
+        ck(basalt::core::allocate_pinned_host((void**) &go_, 64, cudaHostAllocPortable | cudaHostAllocMapped), "plan word", err) &&
         ck(cudaHostGetDevicePointer((void**) &go_map_, go_, 0), "mapped plan word", err) &&
         ck(cudaMalloc(&d_meta_, sizeof(Meta)), "plan", err) &&
         ck(cudaMalloc((void**) &d_out_, row_bytes * CAP), "rows", err) &&
@@ -454,7 +455,7 @@ bool PeerExperts::open_scratch(int n, uint64_t bytes, std::string& err) {
     const bool ok = ck(cudaMalloc((void**) &scratch_base_, stride * (uint64_t) n), "scratch slots", err) &&
                     ck(cudaStreamCreateWithFlags(&fetch_, cudaStreamNonBlocking), "fetch stream", err) &&
                     ck(cudaEventCreateWithFlags(&fetch_ev_, cudaEventDisableTiming), "fetch event", err) &&
-                    ck(cudaHostAlloc(&h_fplan_, sizeof(Meta), cudaHostAllocPortable | cudaHostAllocMapped), "fetched plan staging", err) &&
+                    ck(basalt::core::allocate_pinned_host(&h_fplan_, sizeof(Meta), cudaHostAllocPortable | cudaHostAllocMapped), "fetched plan staging", err) &&
                     ck(cudaHostGetDevicePointer(&fplan_map_, h_fplan_, 0), "mapped fetched plan", err) &&
                     ck(cudaMalloc(&d_fplan_, sizeof(Meta)), "fetched plan", err);
     if (!ok) return false;   // no slot to fetch into; close() frees what was taken

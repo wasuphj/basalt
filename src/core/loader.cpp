@@ -1,4 +1,5 @@
 // src/core/loader.cpp - see loader.hpp.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/loader.hpp"
 
 #include "basalt/core/load_progress.hpp"
@@ -292,13 +293,13 @@ struct Loader::Impl {
 
     void release(uint8_t* p) {
         if (p == nullptr) return;
-        if (pinned) (void) cudaFreeHost(p);
+        if (pinned) (void) basalt::core::release_pinned_host(p);
         else platform::free_aligned(p);
     }
 
     bool alloc(uint8_t*& alloc, uint8_t*& aligned, uint64_t bytes) {
         if (pinned) {
-            if (cudaHostAlloc((void**) &alloc, (size_t) (bytes + kAlign), cudaHostAllocPortable) != cudaSuccess) {
+            if (basalt::core::allocate_pinned_host((void**) &alloc, (size_t) (bytes + kAlign), cudaHostAllocPortable) != cudaSuccess) {
                 (void) cudaGetLastError();
                 alloc = nullptr;
                 return false;

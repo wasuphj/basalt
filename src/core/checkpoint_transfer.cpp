@@ -1,4 +1,5 @@
 // src/core/checkpoint_transfer.cpp - a conversation checkpoint's running state between the device and the host.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/checkpoint_transfer.hpp"
 
 #include "basalt/core/on_device.hpp"
@@ -13,13 +14,13 @@ bool lock_block(void* p, size_t bytes) {
     uint64_t allowance = 0;
     std::string why;
     if (host_pin_budget(allowance, why) && allowance < bytes) return false;
-    if (cudaHostRegister(p, bytes, cudaHostRegisterPortable) == cudaSuccess) return true;
+    if (basalt::core::register_host_memory(p, bytes, cudaHostRegisterPortable) == cudaSuccess) return true;
     cudaGetLastError();
     return false;
 }
 
 void unlock_block(void* p) {
-    if (cudaHostUnregister(p) != cudaSuccess) cudaGetLastError();
+    if (basalt::core::unregister_host_memory(p) != cudaSuccess) cudaGetLastError();
 }
 
 bool fail(std::string& error, const char* what, cudaError_t status) {

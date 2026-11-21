@@ -3,6 +3,8 @@
 #include "qfn_state.hpp"
 
 #include "basalt/core/host_plan.hpp"
+#include "basalt/core/host_pool.hpp"
+#include "basalt/platform/system.hpp"
 
 namespace basalt::models::qwen4exp::serve {
 
@@ -250,7 +252,46 @@ int QfnRuntime::init_memory() {
     if (const uint64_t avail = basalt::platform::available_memory(); avail > 0)
         basalt::log::info("basalt serve", "RAM %.2f GiB free, guard %.2f GiB", (double) avail / 1073741824.0,
                           (double) guard_floor / 1073741824.0);
+    relieve_pool(true);
     return 0;
+}
+
+// the RAM guard: the RAM homes of experts no slot holds go back (they are read from the file until a slot takes them)
+void QfnRuntime::shed_more() {
+    if (srcp != &src || !src.complement_ready() || src.homes_bytes() == 0) return;
+    if (windows_in_flight()) return;   // a window may be reading a home: only between windows
+    // the homes are the working set's RAM copy (experts the KV took the slots of): giving them back makes every
+    // token read those experts from the file, so only at the critical level, never to make room for a cache
+    if (basalt::platform::ram_guard_level() != basalt::platform::RamLevel::Critical) return;
+    const uint64_t held = src.homes_bytes();
+    size_t released = 0;
+    for (size_t j = 0; j < host_res.size(); ++j)
+        if (host_res[j] < 0 && src.home_release((int64_t) j / g.n_expert, (int64_t) j % g.n_expert)) ++released;
+    const uint64_t freed = src.homes_reclaim() + src.homes_compact();
+    if (released > 0 || freed > 0)
+        basalt::log::info("basalt serve", "RAM guard: %zu RAM homes released, %.0f MiB freed (%.0f MiB held before)",
+                          released, (double) freed / 1048576.0, (double) held / 1048576.0);
+}
+
+void QfnRuntime::relieve_pool(bool startup) {
+    if (o.host_pool_bytes == 0 || !basalt::core::host_pool_enabled()) return;
+    // BASALT_POOL_RELIEF=0 keeps only the startup relief (a request's end gives nothing back): for A/B measurements
+    if (!startup) { const char* e = std::getenv("BASALT_POOL_RELIEF"); if (e != nullptr && e[0] == '0') return; }
+    src.trim_file_cache();
+    // under pressure on the system's own RAM (not the pool's) the warm reserve goes too
+    basalt::platform::HostMemory sys;
+    const bool known = basalt::platform::host_available_memory(sys, basalt::platform::meminfo_path(),
+                                                              basalt::platform::self_cgroup_path(),
+                                                              basalt::platform::cgroup_root());
+    const bool pressure = known && sys.available < (10ull << 30);
+    const size_t warm = startup ? (1024ull << 20) : pressure ? 0 : (3584ull << 20);
+    (void) basalt::core::discard_host_pool_free(warm);
+    if (!startup) {
+        const auto pool = basalt::core::host_pool_stats();
+        basalt::log::info("host pool", "used %llu MiB, peak %llu MiB of %llu MiB; allocation refusals %llu",
+                          (unsigned long long) (pool.used >> 20), (unsigned long long) (pool.peak >> 20),
+                          (unsigned long long) (pool.capacity >> 20), (unsigned long long) pool.failures);
+    }
 }
 
 }  // namespace basalt::models::qwen4exp::serve

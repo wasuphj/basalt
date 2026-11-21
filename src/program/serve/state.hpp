@@ -2,6 +2,7 @@
 #pragma once
 
 #include "../cli/tokens.hpp"
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/checkpoint_transfer.hpp"
 #include "basalt/core/conversation_cache.hpp"
 #include "basalt/core/conversation_memory.hpp"
@@ -98,6 +99,10 @@ public:
     virtual void after_input_start() {}
     virtual void print_info() = 0;   // the INFO line
     virtual void at_exit() {}
+    /// With a fixed host pool: give back the file pages and the idle pool pages (startup keeps 1 GiB warm, a request's end up to 3.5 GiB).
+    virtual void relieve_pool(bool /*startup*/) {}
+    /// The RAM guard's last step: what else the model can give back (the experts' RAM homes).
+    virtual void shed_more() {}
     /// The pack's tokenizer rule, set before the input starts.
     basalt::model::ModelAdapter::PreTokenizer pre_{};
     static constexpr int kPenaltyWindowCap = 4096;
@@ -114,6 +119,8 @@ public:
     virtual void solo_draft_back(bool) {}
     virtual bool capture_admit(uint64_t need, uint64_t floor) = 0;
     virtual bool park_current(size_t held, int64_t kept) = 0;
+    /// With a fixed host pool: moves the parked conversations to the disk tier to fit `need`; false without a pool.
+    virtual bool reclaim_pool_for(size_t, uint64_t) { return false; }
     virtual bool copy_from_slot(int b, const ConvCheckpoint* at, std::string& e) = 0;
     /// Waits for the checkpoint save still on its way to the host, if any; a save that failed drops its checkpoint.  Every
     /// reader of a checkpoint's bytes (a restore, a copy, a park) calls it first.
@@ -169,6 +176,12 @@ public:
     // the disk tier under it (--conversation-cache-dir): what leaves the session or the RAM cache is written there,
     // and a prompt that starts with a stored conversation reads it back, after a restart too
     basalt::core::ConversationStore disk{};
+    /// A conversation to the disk tier: written before this returns with a fixed host pool (its RAM is then free to
+    /// reuse, and a request right after finds it), queued otherwise.
+    bool store_conversation(basalt::core::SavedConversation& s) {
+        if (basalt::core::host_pool_enabled()) return disk.put_sync(s);
+        return disk.put(std::move(s), kDiskQueueCap);
+    }
     virtual int64_t disk_min_tokens() const = 0;
     static constexpr int64_t kDiskStaleTokens = 4096;   // a stored copy this close to the chain's end is kept
     static constexpr uint64_t kDiskQueueCap = 4ull << 30;   // images waiting for the writer, in RAM

@@ -1,3 +1,4 @@
+#include "basalt/core/host_pool.hpp"
 #include "basalt/models/qwen4exp/shared_names.hpp"
 #include "helpers.hpp"
 
@@ -70,9 +71,9 @@ double probe_pcie_h2d_gbps(std::string* samples) {
     constexpr int kBursts = 4;
     void* h = nullptr;
     void* d = nullptr;
-    if (cudaMallocHost(&h, kBytes) != cudaSuccess) return -1.0;
+    if (basalt::core::allocate_pinned_host(&h, kBytes) != cudaSuccess) return -1.0;
     if (cudaMalloc(&d, kBytes) != cudaSuccess) {
-        cudaFreeHost(h);
+        basalt::core::release_pinned_host(h);
         return -1.0;
     }
     std::memset(h, 0, kBytes);   // fault the pages in before timing
@@ -106,7 +107,7 @@ double probe_pcie_h2d_gbps(std::string* samples) {
     }
     if (!ok) (void) cudaGetLastError();
     cudaFree(d);
-    cudaFreeHost(h);
+    basalt::core::release_pinned_host(h);
     return bw;
 }
 
@@ -123,7 +124,7 @@ double probe_h2d_together_gbps(const std::vector<int>& devs) {
         if (!ok) break;
         const basalt::core::OnDevice on(dev);
         Card c{dev};
-        ok = cudaHostAlloc(&c.h, kBytes, cudaHostAllocPortable) == cudaSuccess && cudaMalloc(&c.d, kBytes) == cudaSuccess &&
+        ok = basalt::core::allocate_pinned_host(&c.h, kBytes, cudaHostAllocPortable) == cudaSuccess && cudaMalloc(&c.d, kBytes) == cudaSuccess &&
              cudaStreamCreateWithFlags(&c.s, cudaStreamNonBlocking) == cudaSuccess;
         if (c.h != nullptr) std::memset(c.h, 0, kBytes);   // fault the pages in before timing
         ok = ok && cudaMemcpyAsync(c.d, c.h, kBytes, cudaMemcpyHostToDevice, c.s) == cudaSuccess &&   // warmup
@@ -149,7 +150,7 @@ double probe_h2d_together_gbps(const std::vector<int>& devs) {
         const basalt::core::OnDevice on(c.dev);
         if (c.s != nullptr) cudaStreamDestroy(c.s);
         if (c.d != nullptr) cudaFree(c.d);
-        if (c.h != nullptr) cudaFreeHost(c.h);
+        if (c.h != nullptr) basalt::core::release_pinned_host(c.h);
     }
     if (!ok) {
         (void) cudaGetLastError();

@@ -4,6 +4,11 @@
 
 namespace basalt::models::qwen4exp::serve {
 
+namespace {
+constexpr int64_t kKvHoldMinTokens = 32768;   // a request this long keeps its room for the short ones after it
+constexpr int kKvHoldSeconds = 300;
+}  // namespace
+
 bool QfnRequest::cvec_wanted() const { return basalt::kernels::cvec().loaded() ? req_cvec != 0 : true; }
 void QfnRequest::set_cvec() { if (basalt::kernels::cvec().loaded()) basalt::kernels::cvec_set_enabled(want_cvec); }
 void QfnRequest::select_view() { rview = &(runtime_.rviews[(size_t) std::max(slot_b, 0)]); }
@@ -15,7 +20,18 @@ bool QfnRequest::slot_draft_in(int slot) {
     return true;
 }
 void QfnRequest::drop_stale_reuse() { runtime_.conversations->drop_reuse_unless(runtime_.rsp); }
-bool QfnRequest::release_room() { return runtime_.kv_release(*runtime_.rsp, n + runtime_.kKvGrowCells, runtime_.err); }
+// A short request between the turns of a long conversation keeps that conversation's room for a while: giving the
+// cells to the expert cache and taking them back at the next turn costs a second of expert moves each time.
+bool QfnRequest::release_room() {
+    int64_t keep = n + runtime_.kKvGrowCells;
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= runtime_.kv_hold_until) runtime_.kv_hold_cells = 0;
+    if (n >= kKvHoldMinTokens && keep >= runtime_.kv_hold_cells) {
+        runtime_.kv_hold_cells = keep;
+        runtime_.kv_hold_until = now + std::chrono::seconds(kKvHoldSeconds);
+    }
+    return runtime_.kv_release(*runtime_.rsp, std::max(keep, runtime_.kv_hold_cells), runtime_.err);
+}
 bool QfnRequest::checkpoint_mount(const ConvCheckpoint& c) {
     if (!checkpoint_restore(c, *runtime_.rsp, runtime_.g) || c.stage_parts.size() != runtime_.stages.size()) return false;
     for (size_t i = 0; i < runtime_.stages.size(); ++i) {

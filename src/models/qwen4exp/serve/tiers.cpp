@@ -1,4 +1,5 @@
 // src/models/qwen4exp/serve/tiers.cpp - tiers operations for the persistent engine.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/models/qwen4exp/shared_names.hpp"
 #include "qfn_state.hpp"
 
@@ -635,7 +636,7 @@ int QfnRuntime::init_tiers() {
     xq_words = false;   // the round in flight writes the landed words
     xq_pin = nullptr;
     if (ver.landed_words() != nullptr &&
-        cudaHostAlloc((void**) &xq_pin, (size_t) kXqPinRounds * (size_t) (g.n_layers + 1) * 4, cudaHostAllocPortable) !=
+        basalt::core::allocate_pinned_host((void**) &xq_pin, (size_t) kXqPinRounds * (size_t) (g.n_layers + 1) * 4, cudaHostAllocPortable) !=
             cudaSuccess) {
         cudaGetLastError();
         xq_pin = nullptr;

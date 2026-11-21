@@ -14,6 +14,7 @@
 // Events order the reuse of each buffer, so no host thread waits; the host's per-layer tables alternate between two sets,
 // which the caller's next-but-one layer may rewrite only after `join` (each layer starts after the main card's stream
 // reached it).
+#include "basalt/core/host_pool.hpp"
 #include "basalt/prefill/peer_share.hpp"
 
 #include "basalt/core/on_device.hpp"
@@ -210,7 +211,7 @@ struct PeerShare::Impl {
                 if (e) cudaEventDestroy(e);
             if (dxq) cudaFree(dxq);
         }
-        for (void* p : host) cudaFreeHost(p);
+        for (void* p : host) basalt::core::release_pinned_host(p);
     }
 };
 
@@ -308,7 +309,7 @@ bool PeerShare::open(int main_device, int peer_device, const Dims& d, std::strin
         ok = ok && cudaMalloc(&m->dxq, mmq::q8_bytes(kQuantRows, d.n_embd)) == cudaSuccess;
         layout(d, [](size_t) {}, [&](size_t b) {
             void* p = nullptr;
-            if (ok && cudaHostAlloc(&p, b, cudaHostAllocPortable | cudaHostAllocMapped) == cudaSuccess)
+            if (ok && basalt::core::allocate_pinned_host(&p, b, cudaHostAllocPortable | cudaHostAllocMapped) == cudaSuccess)
                 hv.push_back(p), m->host.push_back(p);
             else ok = false;
         });

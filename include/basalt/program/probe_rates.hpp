@@ -6,6 +6,7 @@
 // expert format, its RAM-resident blobs and its peer path.
 #pragma once
 
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/on_device.hpp"
 #include "basalt/kernels/cpu/native_expert.hpp"
 #include "basalt/kernels/cpu/pool.hpp"
@@ -90,7 +91,7 @@ struct HostBuf {
     HostBuf(const HostBuf&) = delete;
     HostBuf& operator=(const HostBuf&) = delete;
     bool alloc(size_t n, unsigned flags) {
-        if (cudaHostAlloc(&p, n, flags) == cudaSuccess) {
+        if (basalt::core::allocate_pinned_host(&p, n, flags) == cudaSuccess) {
             std::memset(p, 0, n);
             return true;
         }
@@ -98,7 +99,7 @@ struct HostBuf {
         p = nullptr;
         return false;
     }
-    ~HostBuf() { if (p != nullptr) cudaFreeHost(p); }
+    ~HostBuf() { if (p != nullptr) basalt::core::release_pinned_host(p); }
 };
 
 struct Stream {

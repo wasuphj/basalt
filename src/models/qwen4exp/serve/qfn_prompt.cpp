@@ -65,8 +65,9 @@ void QfnRequest::limit_parts() {
             turn_at = -1;
             root_at = -1;
             media_at = -1;
+            fork_at = -1;
         } else {
-            if (turn_at - std::max(read_from, root_at) < runtime_.o.prompt_cache_root) turn_at = -1;
+            if (turn_at - std::max(read_from, root_at) < runtime_.o.prompt_cache_root) { turn_at = -1; fork_at = -1; }
             if (media_at - std::max(read_from, root_at) < runtime_.o.prompt_cache_root) media_at = -1;
         }
     }
@@ -74,7 +75,7 @@ void QfnRequest::limit_parts() {
     // are read into the row cache beside it
     {
         int64_t first_to = 0;
-        for (const int64_t to : {root_at, media_at, turn_at, n - 1})
+        for (const int64_t to : {root_at, media_at, fork_at, turn_at, n - 1})
             if (to > read_from) { first_to = to; break; }
         runtime_.sp.set_ple_warm(ids.data(), read_from, first_to, n - 1);
     }

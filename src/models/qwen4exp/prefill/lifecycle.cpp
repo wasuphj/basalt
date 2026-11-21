@@ -1,3 +1,4 @@
+#include "basalt/core/host_pool.hpp"
 #include "state.hpp"
 #include "layout.hpp"
 #include "basalt/models/qwen4exp/prefill/prefill.hpp"
@@ -38,18 +39,18 @@ void Prefill::release() {
         if (impl_->used[i]) cudaEventDestroy(impl_->used[i]);
     }
     for (int b = 0; b < 2; ++b) {
-        if (impl_->hand[b]) cudaFreeHost(impl_->hand[b]);
+        if (impl_->hand[b]) basalt::core::release_pinned_host(impl_->hand[b]);
         if (impl_->ple_copied[b]) cudaEventDestroy(impl_->ple_copied[b]);
-        if (impl_->ple_emb_host[b] && impl_->ple_pageable[b].empty()) cudaFreeHost(impl_->ple_emb_host[b]);
+        if (impl_->ple_emb_host[b] && impl_->ple_pageable[b].empty()) basalt::core::release_pinned_host(impl_->ple_emb_host[b]);
     }
     if (impl_->copy) cudaStreamDestroy(impl_->copy);
-    if (impl_->grp_host) cudaFreeHost(impl_->grp_host);
+    if (impl_->grp_host) basalt::core::release_pinned_host(impl_->grp_host);
     for (float* p : {impl_->cpu_x, impl_->cpu_rows})
-        if (p) cudaFreeHost(p);
+        if (p) basalt::core::release_pinned_host(p);
     if (impl_->cpu_s) cudaStreamDestroy(impl_->cpu_s);
     for (cudaEvent_t e : {impl_->cpu_ev_in, impl_->cpu_ev_x, impl_->cpu_gev[0], impl_->cpu_gev[1], impl_->ahead_ev})
         if (e) cudaEventDestroy(e);
-    if (impl_->guess_host) cudaFreeHost(impl_->guess_host);
+    if (impl_->guess_host) basalt::core::release_pinned_host(impl_->guess_host);
     for (void* p : impl_->owned) cudaFree(p);
 }
 
@@ -105,18 +106,18 @@ bool Prefill::init(const core::WeightTable& wt, const core::ModelGeometry& g, co
     {
         const size_t need = 3 * T * K + (size_t) (2 * (m.g->n_expert + m.g->n_expert / MMQ_GROUP + 2));
         if (m.grp_n < need) {
-            if (m.grp_host) cudaFreeHost(m.grp_host);
+            if (m.grp_host) basalt::core::release_pinned_host(m.grp_host);
             m.grp_host = m.grp_dev = nullptr;
             m.grp_n = m.grp_tk = 0;
             void *h = nullptr, *d = nullptr;
-            if (cudaHostAlloc(&h, need * 4, cudaHostAllocMapped | (core::peer_portable() ? cudaHostAllocPortable : 0)) == cudaSuccess &&
+            if (basalt::core::allocate_pinned_host(&h, need * 4, cudaHostAllocMapped | (core::peer_portable() ? cudaHostAllocPortable : 0)) == cudaSuccess &&
                 cudaHostGetDevicePointer(&d, h, 0) == cudaSuccess) {
                 m.grp_host = (int32_t*) h;
                 m.grp_dev = (int32_t*) d;
                 m.grp_n = need;
                 m.grp_tk = T * K;
             } else {                              // the copies, as before
-                if (h) cudaFreeHost(h);
+                if (h) basalt::core::release_pinned_host(h);
                 cudaGetLastError();
             }
         }
@@ -140,7 +141,7 @@ bool Prefill::init(const core::WeightTable& wt, const core::ModelGeometry& g, co
         if (got) m.owned.push_back(m.guess_ids);
         got = got && cudaMalloc((void**) &m.guess_w, (size_t) rows * 4) == cudaSuccess;
         if (got) m.owned.push_back(m.guess_w);
-        got = got && cudaHostAlloc((void**) &m.guess_host, (size_t) rows * 4,
+        got = got && basalt::core::allocate_pinned_host((void**) &m.guess_host, (size_t) rows * 4,
                                    cudaHostAllocMapped | (core::peer_portable() ? cudaHostAllocPortable : 0)) == cudaSuccess &&
               cudaHostGetDevicePointer(&hd, m.guess_host, 0) == cudaSuccess;
         if (got) {

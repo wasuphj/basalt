@@ -170,6 +170,19 @@ bool QfnRuntime::cache_regrow(std::string& e) {
     if (!xcache.sync_queued(ferr)) { e = "elastic KV: " + ferr; return false; }
     res_upload();
     relend();
+    // the slots hold their experts again: the RAM homes of experts below the loan go back (as the VRAM command does)
+    if (srcp == &src && src.complement_ready()) {
+        const int64_t loan_from = pf_parts.empty() || pf_parts[0].first < 0 ? INT64_MAX : pf_parts[0].first;
+        size_t released = 0;
+        for (size_t j = 0; j < host_res.size(); ++j)
+            if (host_res[j] >= 0 && host_res[j] < loan_from &&
+                src.home_release((int64_t) j / g.n_expert, (int64_t) j % g.n_expert))
+                ++released;
+        const uint64_t freed = src.homes_reclaim() + src.homes_compact();
+        if (released > 0 || freed > 0)
+            basalt::log::info("basalt serve", "elastic KV: %zu RAM homes released (%.0f MiB freed, %.0f MiB held)",
+                              released, (double) freed / 1048576.0, (double) src.homes_bytes() / 1048576.0);
+    }
     return true;
 }
 
@@ -332,7 +345,13 @@ bool QfnRuntime::kv_fit(basalt::core::SessionState& s, int64_t cells, std::strin
         // whole tail segments: everything from the first one at or past `keep` goes
         const int64_t gran = (int64_t) std::max<uint64_t>(basalt::core::vmm::granularity(), 1);
         const int64_t keep = std::max<int64_t>(0, (xcache.mapped_bytes() - (add - room)) / gran * gran);
-        if (kv_keep_routed && !move_routed_below(xcache.slots_after_shrink(keep), "elastic KV", e)) return false;
+        const int64_t next_slots = xcache.slots_after_shrink(keep);
+        if (kv_keep_routed && !move_routed_below(next_slots, "elastic KV", e)) return false;
+        // the resident RAM copy holds only the experts no slot holds: the experts in the slots about to go get a RAM
+        // home first, or every token would read them from the file while the KV holds the cache's tail
+        if (std::string herr; srcp == &src && !home_given_up(next_slots, herr))
+            basalt::log::warn("basalt serve", "elastic KV: experts leaving the cache keep no RAM copy (%s); they are "
+                              "read from the file", herr.c_str());
         if (!xcache.shrink(keep, e)) return false;
         const int64_t live = xcache.slots();
         std::vector<int32_t> off;

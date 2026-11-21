@@ -36,6 +36,7 @@ struct CommonOptions {
     /// not hold that the expert profile ranks hottest are copied into RAM, the rest are read from the files in place
     /// (the GGUF shards when the model file has no experts section).  0 = the whole complement (--resident-experts).
     uint64_t resident_budget = 0;
+    uint64_t host_pool_bytes = 0;   ///< Fixed, prefaulted backing for host data buffers; 0 keeps the normal allocator.
     /// Slots of VRAM-resident experts.  **0 = off, and off is the default.**  Switching the cache on moves work off the
     /// CPU pool (the model's hit kernel).
     int expert_cache = 0;
@@ -139,6 +140,11 @@ struct CommonOptions {
     /// --serve: a prompt read from token 0 is also checkpointed at its first turn boundary - the end of the system
     /// prompt, which every chat of the same client shares - when that is at least N tokens (0 = never)
     int64_t prompt_cache_root = 2048;
+    /// --serve (opt-in): also checkpoint where the last user turn starts - the end of the shared history - when that
+    /// history is at least N tokens past the previous checkpoint (0 = never).  A request that branches off the same
+    /// history with a different last message (a sibling or sub-agent) then reuses the whole history instead of
+    /// reading it again from the system prompt's end.  Needs --prompt-cache of 3 or more.
+    int64_t prompt_cache_fork = 0;
     /// --serve: the token that opens a chat turn (the pack's own, or --turn-token).  The last one in a prompt is where the chat's
     /// history ends and the new assistant turn begins, which is the checkpoint the next request can reuse.
     int64_t turn_token = -1;

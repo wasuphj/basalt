@@ -1,4 +1,5 @@
 // src/core/pinned.cu - the pinned host arena.
+#include "basalt/core/host_pool.hpp"
 #include "basalt/core/pinned.hpp"
 #include "basalt/core/ram_load.hpp"
 #include "basalt/platform/file.hpp"
@@ -80,9 +81,9 @@ PinnedArena::~PinnedArena() {
     if (base) {
         if (locked_bytes) basalt::platform::unlock_resident((uint8_t*) base + (slice_bytes ? registered_bytes : 0), locked_bytes);
         if (slice_bytes) {
-            for (uint64_t off : slice_starts) cudaHostUnregister((uint8_t*) base + off);
+            for (uint64_t off : slice_starts) basalt::core::unregister_host_memory((uint8_t*) base + off);
         } else if (!platform::kBoundHostRegistration || registered_bytes > 0) {
-            cudaHostUnregister(base);
+            basalt::core::unregister_host_memory(base);
         }
         basalt::platform::free_region(mapping_base ? mapping_base : base, mapping_bytes ? mapping_bytes : capacity);
         base = nullptr;

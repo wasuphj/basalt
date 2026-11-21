@@ -388,6 +388,10 @@ public:
     uint64_t places_generation() const override { return places_gen_; }
     bool pcie_layer(int64_t layer) const override;
     bool copy_blob(int64_t layer, int64_t expert, uint8_t* dst) override;
+    /// Drop file pages without invalidating their virtual addresses or resident RAM copies.
+    void trim_file_cache();
+    uint64_t file_cache_trims() const { return pool_map_trims_; }
+
     /// Blobs touched, for the driver to report.  With `h = 0` this is `48 * k` per token and the number is only
     /// interesting once Phase 3 makes it not so.
     int64_t reads() const override { return reads_; }
@@ -479,10 +483,17 @@ private:
     int64_t exchanges_ = 0;
     uint64_t places_gen_ = 0;   ///< places_generation
     int64_t spares_want_ = 0;
+    uint64_t spare_at_ = 0;
+    std::vector<std::pair<uint64_t, int64_t>> spare_sizes_;
     std::vector<std::pair<uint64_t, uint64_t>> spare_free_;   // (offset, bytes) of free places
     std::atomic<int64_t> file_reads_{0};
     int64_t reads_ = 0;
     int fd_ = -1;
+    int pool_direct_fd_ = -1;
+    void* pool_read_stage_ = nullptr;
+    uint64_t pool_read_bytes_ = 0;
+    uint64_t pool_map_bytes_ = 0, pool_map_trims_ = 0;
+    mutable std::mutex pool_read_mu_;
     std::string path_;   ///< the mapped file, which the bulk reads open unbuffered
 };
 

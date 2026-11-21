@@ -166,6 +166,23 @@ def _number(v) -> bool:
 FATAL_PREFIXES = ("ERR verify: timed out at layer ", "ERR verify batch: timed out at layer ",
                   "ERR verify: an earlier window never finished", "ERR verify batch: an earlier window never finished")
 # Engine ERR texts that are the request's fault (a 400); any other ERR of a request is an engine failure (a 500).
+
+_DEFAULT_BIAS: dict | None = None
+
+
+def _default_bias() -> dict[int, float]:
+    """The deployment's default logit bias (BASALT_DEFAULT_LOGIT_BIAS_FILE: a JSON list of token ids, each banned at -100),
+    applied when a request carries no bias of its own: a request that sets any logit_bias keeps only its own."""
+    global _DEFAULT_BIAS
+    if _DEFAULT_BIAS is None:
+        path = os.environ.get("BASALT_DEFAULT_LOGIT_BIAS_FILE", "")
+        try:
+            _DEFAULT_BIAS = {int(i): -100.0 for i in json.load(open(path))} if path else {}
+        except (OSError, ValueError) as e:
+            print(f"[server] warning: BASALT_DEFAULT_LOGIT_BIAS_FILE unreadable ({e}); no default bias", flush=True)
+            _DEFAULT_BIAS = {}
+    return _DEFAULT_BIAS
+
 REQUEST_ERRS = ("prompt (", "bad request:", "sampling ", "logit_bias:", "grammar:", "ppl:",
                 "a token id is outside the vocabulary", "this engine was started without --vision",
                 "the prompt cannot end in an image")
@@ -819,7 +836,7 @@ class ProcessEngine:
             keys += " relax=0"
         elif _number(rd):
             keys += f" relax={float(rd)!r}"
-        return keys + ProcessEngine.projection_key(sampling) + bias_key(sampling.get(BIAS_KEY)) \
+        return keys + ProcessEngine.projection_key(sampling) + bias_key(sampling.get(BIAS_KEY) or _default_bias()) \
             + grammar_key(sampling.get(GRAMMAR_KEY)) + logprobs_key(sampling.get(LOGPROBS_KEY))
 
     @staticmethod

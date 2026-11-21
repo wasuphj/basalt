@@ -223,13 +223,24 @@ Flow Request::restore() {
             basalt::core::progress_at("request");
         }
     }
+    const auto match_t1 = Clock::now();
+    bool parked_early = false;
     if (from_disk) {
         const uint64_t need = runtime_.disk.load_bytes(on_disk);
         const uint64_t floor = std::max<uint64_t>((uint64_t) runtime_.o.conversation_cache_min_free_mib << 20, runtime_.disk_floor);
+        // with a fixed host pool the outgoing conversation is parked before the read, so the two images are not in
+        // the pool at once (read first, the outgoing one found no room and was lost)
+        if (basalt::core::host_pool_enabled() && slot_source < 0) {
+            if (!runtime_.park_current(need, 0)) {
+                std::printf("ERR %s\n", runtime_.err.c_str());
+                return Flow::error;
+            }
+            parked_early = true;
+        }
         const auto t0 = Clock::now();
         basalt::core::SavedConversation image;
         std::string de;
-        if (!runtime_.capture_admit(need, floor)) {
+        if (!runtime_.capture_admit(need, floor) && !runtime_.reclaim_pool_for(need, floor)) {
             basalt::log::info("basalt serve", "conversation cache: %lld tokens on disk not read (physical RAM "
                               "admission; need %llu MiB)", (long long) on_disk.tokens,
                               (unsigned long long) (need >> 20));
@@ -265,7 +276,7 @@ Flow Request::restore() {
     // Preserve the outgoing branch before any checkpoint rewind, reset,
     // or incoming restore overwrites the positional state it requires.
     if (const Flow flow = make_room(); flow != Flow::proceed) return flow;
-    if ((!from_live || incoming || slot_source >= 0) &&
+    if (!parked_early && (!from_live || incoming || slot_source >= 0) &&
         !runtime_.park_current(incoming ? incoming->bytes() : 0, incoming || slot_source >= 0 ? 0 : resume)) {
         std::printf("ERR %s\n", runtime_.err.c_str());
         return Flow::error;
@@ -369,6 +380,15 @@ Flow Request::restore() {
     if (!release_room()) {
         std::printf("ERR %s\n", runtime_.err.c_str());
         return Flow::error;
+    }
+    {
+        using Ms = std::chrono::duration<double, std::milli>;
+        const auto now = Clock::now();
+        if (Ms(now - r0).count() >= 500)
+            basalt::log::info("basalt serve", "request setup %.0f ms before the prompt read (match and RAM wait "
+                              "%.0f ms, park and disk read %.0f ms, restore and room %.0f ms)", Ms(now - r0).count(),
+                              Ms(match_t1 - r0).count(), Ms(restore_t0 - match_t1).count(),
+                              Ms(now - restore_t0).count());
     }
     std::printf("RESUME %lld\n", (long long) resume);   // before reading: this many prompt tokens are reused
     basalt::core::progress_at("reading the prompt, from token", read_from);
